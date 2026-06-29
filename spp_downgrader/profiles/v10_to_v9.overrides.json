@@ -1,4 +1,15 @@
 {
   "_comment": "DataSourceVectorial (SVG vector source) is supported in v10/v11/v12 but ABSENT in v9 and v8.1, confirmed by compatibility testing. The feature disappears at the v10->v9 boundary, so it is dropped HERE. Composition unions this into ANY chain ending at v9 or below (v9, v8.1), so both targets handle it. The engine's CASCADE_DROP rules (hbo_reserializer) then drop the now-source-less substance inputs / SVG fill layers so nothing dangles.",
-  "blacklist": ["DataSourceVectorial"]
+  "blacklist": ["DataSourceVectorial"],
+
+  "_comment_schema_add": "DataActionSmudge is missing from the auto-generated v9 schema (no v9 sample uses the smudge tool), so a smudge layer downgraded to v9 isn't projected and v9 errors 'No value defined for DataActionSmudge.projDuplicates'. v12.1 dropped projDuplicates/stencilPostBlending (it carries changeFlags/strokes3D instead), so they must be synthesized. Member list = v9 DataActionPaint minus sourceColor (the v9 stroke-action family base). Mirrors the same fix at the v9->v8.1 boundary; this one covers the v9 target. defaults_add values are the genuine v9 DataActionPaint/Eraser defaults.",
+  "schema_add": {
+    "DataActionSmudge": ["brush", "channelTypes", "enabled", "opacity", "projDuplicates", "projMatrix", "projSamplingWrap", "selection", "sourceStencil", "sourceTransparent", "stampBlendingMode", "stencilPostBlending", "strokes", "strokes3D", "tags", "uid"]
+  },
+  "defaults_add": {
+    "DataActionSmudge": {
+      "projDuplicates": ["p", 10, "ff"],
+      "stencilPostBlending": ["p", 10, "ff"]
+    }
+  }
 }
