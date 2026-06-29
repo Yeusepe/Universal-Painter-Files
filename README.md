@@ -37,7 +37,7 @@ others can open a downgraded copy in theirs.
 
 After reload, a **Universal** menu appears in the menu bar. (If it doesn't. make sure you click on it in the Python menu so that it has a check right besides it)
 
-If reloading does not work, restarting usually does the trick.
+If reloading does not work, restarting usually does the trick. Make SURE that the folder is the root folder, and not nested in another one (So, when extracting, it is Documents\Adobe\Adobe Substance 3D Painter\python\plugins\universal_spp_plugin, not something like Documents\Adobe\Adobe Substance 3D Painter\python\plugins\universal_spp_plugin (1)\universal_spp_plugin or similar.)
 
 ### Save and open universal projects
 
