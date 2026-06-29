@@ -27,7 +27,7 @@ others can open a downgraded copy in theirs.
 
 ## How to install
 
-1. Download the latest release from the [Releases](../../releases) page.
+1. Download the latest "universal_spp_plugin.zip" release from the [Releases](../../releases) page.
 2. Open Adobe Substance 3D Painter.
 3. Go to **Python > Plugins Folder**. This opens your plugins directory (typically
    `Documents\Adobe\Adobe Substance 3D Painter\python\plugins`).
