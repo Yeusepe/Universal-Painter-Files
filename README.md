@@ -31,7 +31,6 @@ The plugin shows a loss report before a lossy downgrade is built.
 
 | Path | Purpose |
 | --- | --- |
-
 | [`universal_spp_plugin/`](universal_spp_plugin/README.md) | The Painter plugin. It adds a **Universal** menu for saving and opening `.uspp` files inside Painter. |
 | [`spp_downgrader/`](spp_downgrader/README.md) | The conversion engine and command line tool. It can pack, inspect, plan, and build projects without launching Painter. |
 | [`build.ps1`](build.ps1) | Builds `uspp_tool.exe` with PyInstaller and stages it into `universal_spp_plugin/bin/`. |
