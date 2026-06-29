@@ -20,3 +20,6 @@ universal_spp_plugin/bin/uspp_tool.exe
 .ruff_cache/
 .DS_Store
 Thumbs.db
+
+# Release zips — distributed via GitHub Releases
+universal_spp_plugin-*.zip
