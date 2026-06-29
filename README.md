@@ -37,6 +37,8 @@ others can open a downgraded copy in theirs.
 
 After reload, a **Universal** menu appears in the menu bar. (If it doesn't. make sure you click on it in the Python menu so that it has a check right besides it)
 
+If reloading does not work, restarting usually does the trick.
+
 ### Save and open universal projects
 
 - **Save a `.uspp`:** **Universal > Save as Universal...**
