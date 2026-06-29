@@ -25,14 +25,24 @@ others can open a downgraded copy in theirs.
 > [NOTICE.md](NOTICE.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
 > [LICENSE](LICENSE).
 
-## Just want to use the plugin?
+## How to install
 
-1. Download `uspp_tool.exe` from the [Releases](../../releases) page and put it in
-   `universal_spp_plugin/bin/`.
-2. Follow [`universal_spp_plugin/README.md`](universal_spp_plugin/README.md) to copy
-   the plugin into the application's `python/plugins/` folder.
+1. Download the latest release from the [Releases](../../releases) page.
+2. Open Adobe Substance 3D Painter.
+3. Go to **Python > Plugins Folder**. This opens your plugins directory (typically
+   `Documents\Adobe\Adobe Substance 3D Painter\python\plugins`).
+4. Copy the release into that folder and extract it there.
+5. Go to **Python > Reload Plugins Folder**.
 
-Supported application versions: 8.1-12.1 on Windows.
+After reload, a **Universal** menu appears in the menu bar.
+
+### Save and open universal projects
+
+- **Save a `.uspp`:** **Universal > Save as Universal...**
+- **Open a `.uspp`:** **Universal > Open Universal...**
+
+Supported application versions: 8.1-12.1 on Windows. More detail in
+[`universal_spp_plugin/README.md`](universal_spp_plugin/README.md).
 
 ## Build it yourself
 

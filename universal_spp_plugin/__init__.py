@@ -18,16 +18,19 @@ import substance_painter.logging as sp_log
 import substance_painter.event as sp_event
 
 try:
-    from PySide6 import QtWidgets, QtCore
+    from PySide6 import QtWidgets, QtCore, QtGui
     _PYSIDE = 6
+    _QAction = QtGui.QAction          # QAction moved to QtGui in PySide6
 except ImportError:
     from PySide2 import QtWidgets, QtCore
     _PYSIDE = 2
+    _QAction = QtWidgets.QAction
 
 from .lib import runner, version, dialogs, progress
 
 _menu = None
 _actions = []   # strong refs so Qt doesn't garbage-collect the menu actions
+_file_action = None
 _handled_launch = False   # open the launch-arg .uspp once per session, not on every reload
 _CACHE = os.path.join(tempfile.gettempdir(), "USPPCache")
 
@@ -73,8 +76,7 @@ def _launch_uspp_arg():
     """The .uspp path Painter was launched with, or None. Double-clicking a .uspp runs
     `Painter.exe "<path.uspp>"` (see runner.ensure_association); Painter exposes that to its
     embedded Qt app, so we read it from QApplication.arguments() -- the same source the QML
-    `Qt.application.arguments` exposes. This is how the file reaches the plugin: no IPC, no
-    queue, no temp files."""
+    `Qt.application.arguments` exposes."""
     try:
         app = QtWidgets.QApplication.instance()
         args = list(app.arguments()) if app else []
@@ -150,7 +152,7 @@ def _open_path(uspp):
             )
 
         out = _temp_spp()
-        target_binary = version.running_binary()   # exact path of the Painter we open into
+        target_binary = version.running_binary()
         _log(f"open: target=v{target}  binary={target_binary}")
         ok, err = progress.run_with_progress(
             _parent(), f"Converting project to v{target}",
@@ -237,16 +239,18 @@ def start_plugin():
     a_save.triggered.connect(on_save)
     _actions = [a_open, a_save]
     sp_ui.add_menu(_menu)
-    # Associate .uspp so a double-click runs `Painter.exe "<file.uspp>"` -- Painter opens and
-    # we read the path from its launch arguments (the proper, plugin-driven way; no converter,
-    # no temp .spp on disk, no queue). Point it at THIS running Painter's exe.
+    global _file_action
+    try:
+        _file_action = _QAction("Save as Universal (.uspp)…", mw)
+        _file_action.triggered.connect(on_save)
+        sp_ui.add_action(sp_ui.ApplicationMenu.File, _file_action)
+    except Exception as e:
+        _log(f"File-menu action setup failed: {e}")
     try:
         if runner.ensure_association(version.running_binary()):
             _log("registered .uspp double-click association")
     except Exception as e:
         _log(f"association setup skipped: {e}")
-    # If we were launched on a .uspp, open it once the GUI is ready; the singleShot covers a
-    # plugin reload after the GUI-started event already fired.
     try:
         sp_event.DISPATCHER.connect(sp_event.GraphicalUserInterfaceStarted, _on_gui_started)
         QtCore.QTimer.singleShot(0, _open_launch_if_gui_up)
@@ -257,11 +261,17 @@ def start_plugin():
 
 
 def close_plugin():
-    global _menu, _actions
+    global _menu, _actions, _file_action
     try:
         sp_event.DISPATCHER.disconnect(sp_event.GraphicalUserInterfaceStarted, _on_gui_started)
     except Exception:
         pass
+    if _file_action is not None:
+        try:
+            sp_ui.delete_ui_element(_file_action)
+        except Exception:
+            pass
+        _file_action = None
     if _menu is not None:
         try:
             sp_ui.delete_ui_element(_menu)

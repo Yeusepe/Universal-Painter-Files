@@ -67,7 +67,7 @@ def ensure_association(painter_exe):
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as k:
             if winreg.QueryValueEx(k, "")[0] == cmd:
-                return False          # already current -> nothing to do
+                return False
     except OSError:
         pass
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\.uspp") as k:
@@ -76,7 +76,7 @@ def ensure_association(painter_exe):
         winreg.SetValue(k, "", winreg.REG_SZ, "Universal Substance Painter Project")
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key) as k:
         winreg.SetValue(k, "", winreg.REG_SZ, cmd)
-    icon = _spp_icon(winreg)   # show the same icon Explorer uses for .spp
+    icon = _spp_icon(winreg)
     if icon:
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\USPP.Project\DefaultIcon") as k:
             winreg.SetValue(k, "", winreg.REG_SZ, icon)
