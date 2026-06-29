@@ -33,8 +33,9 @@ others can open a downgraded copy in theirs.
    `Documents\Adobe\Adobe Substance 3D Painter\python\plugins`).
 4. Copy the release into that folder and extract it there.
 5. Go to **Python > Reload Plugins Folder**.
+<img width="635" height="128" alt="How to Install" src="https://github.com/user-attachments/assets/d9db8d07-34d9-45ad-ad56-88a454ab9a4d" />
 
-After reload, a **Universal** menu appears in the menu bar.
+After reload, a **Universal** menu appears in the menu bar. (If it doesn't. make sure you click on it in the Python menu so that it has a check right besides it)
 
 ### Save and open universal projects
 
