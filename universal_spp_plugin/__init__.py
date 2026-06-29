@@ -154,10 +154,8 @@ def _open_path(uspp):
         out = _temp_spp()
         target_binary = version.running_binary()
         _log(f"open: target=v{target}  binary={target_binary}")
-        ok, err = progress.run_with_progress(
-            _parent(), f"Converting project to v{target}",
-            lambda on_p: runner.run_build(uspp, target, out, on_progress=on_p,
-                                          target_binary=target_binary))
+        argv, env = runner.build_args(uspp, target, out, target_binary=target_binary)
+        ok, err = progress.run_with_progress(_parent(), f"Converting project to v{target}", argv, env)
         if not ok:
             dialogs.error(f"Conversion failed.\n{err}")
             return
@@ -211,9 +209,8 @@ def on_save():
         out = dialogs.save_uspp(os.path.splitext(spp)[0] + ".uspp")
         if not out:
             return
-        ok, err = progress.run_with_progress(
-            _parent(), "Saving Universal Project",
-            lambda on_p: runner.run_pack(spp, out, on_progress=on_p))
+        argv, env = runner.pack_args(spp, out)
+        ok, err = progress.run_with_progress(_parent(), "Saving Universal Project", argv, env)
         if ok:
             dialogs.info(f"Saved Universal project:\n{out}")
         else:

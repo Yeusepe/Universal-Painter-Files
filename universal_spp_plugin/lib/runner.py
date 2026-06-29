@@ -111,61 +111,20 @@ _PHASES = (
 )
 
 
-def _run_streaming(args, on_progress, env_extra=None):
-    """Run the tool, stream stdout, drive on_progress(frac, msg). stderr is folded into
-    stdout so one reader can't deadlock on a full pipe. Returns (ok, err)."""
-    env = dict(os.environ)
-    env["USPP_PROGRESS"] = "1"
-    if env_extra:
-        env.update(env_extra)
-    kwargs = dict(text=True, bufsize=1, env=env,
-                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if os.name == "nt":
-        kwargs["creationflags"] = _CREATE_NO_WINDOW
-    p = subprocess.Popen(_argv(*args), **kwargs)
-    log = []
-    for line in p.stdout:
-        line = line.rstrip("\r\n")
-        if line.startswith(_PROGRESS_TAG):
-            parts = line.split("\t")
-            if len(parts) >= 3:
-                try:
-                    f = float(parts[1])
-                    on_progress(None if f < 0 else f, parts[2])   # <0 = indeterminate/busy
-                except Exception:
-                    pass
-            continue
-        if line:
-            log.append(line)
-            for prefix, friendly in _PHASES:
-                if prefix in line:
-                    on_progress(None, friendly)   # None = keep bar busy, just update text
-                    break
-    p.wait()
-    ok = p.returncode == 0
-    return ok, ("" if ok else "\n".join(log[-10:]) or f"exited {p.returncode}")
-
-
-def run_build(uspp, target, out_spp, on_progress=None, target_binary=None):
-    # Builds for "Open" produce a temp file Painter loads then discards -> fast (low)
-    # compression. SPP_FAST is honored by the builder; the CLI default stays unchanged.
-    # target_binary = the exact running Painter exe, so the member-allowlist filter reads
-    # the version we're actually opening into (no path guessing).
+def build_args(uspp, target, out_spp, target_binary=None):
+    """(argv, env) to convert a .uspp to a target .spp -- run via QProcess (progress.py), not
+    a Python thread, so nothing extra has to be torn down at interpreter shutdown.
+    SPP_FAST trades compression for speed (the .spp is a temp Painter loads then discards);
+    SPP_TARGET_BINARY is the exact running Painter so the member filter reads the right version."""
     env = {"SPP_FAST": "1"}
     if target_binary:
         env["SPP_TARGET_BINARY"] = target_binary
-    if on_progress is None:
-        r = _run("build", "--uspp", uspp, "--target", target, "-o", out_spp, env_extra=env)
-        return r.returncode == 0, (r.stderr or "")
-    return _run_streaming(("build", "--uspp", uspp, "--target", target, "-o", out_spp),
-                          on_progress, env_extra=env)
+    return _argv("build", "--uspp", uspp, "--target", target, "-o", out_spp), env
 
 
-def run_pack(spp, out_uspp, on_progress=None):
-    if on_progress is None:
-        r = _run("pack", spp, "-o", out_uspp)
-        return r.returncode == 0, (r.stderr or "")
-    return _run_streaming(("pack", spp, "-o", out_uspp), on_progress)
+def pack_args(spp, out_uspp):
+    """(argv, env) to write the universal .uspp from a saved .spp."""
+    return _argv("pack", spp, "-o", out_uspp), {}
 
 
 if __name__ == "__main__":

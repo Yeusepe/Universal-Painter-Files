@@ -66,4 +66,7 @@ def confirm_lossy(plan):
     box.setText(text)
     box.setStandardButtons(QtWidgets.QMessageBox.Ok | QtWidgets.QMessageBox.Cancel)
     box.button(QtWidgets.QMessageBox.Ok).setText("Continue")
-    return box.exec() == QtWidgets.QMessageBox.Ok
+    ok = box.exec() == QtWidgets.QMessageBox.Ok
+
+    box.deleteLater()
+    return ok

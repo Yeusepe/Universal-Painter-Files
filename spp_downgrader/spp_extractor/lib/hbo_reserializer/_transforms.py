@@ -167,6 +167,37 @@ class TransformMixin:
         actions_tc = self._get_member_type("DataStackActions", "actions") or self.CODE_ARRAY
         return ("object", ("DataStackActions", [("actions", actions_tc, ("array", ("object", [])), False)]))
 
+    def _dedupe_tweak_uids(self, elems):
+        """Ensure every tweak in a BakingTweakList has a unique `uid`. Splitting a
+        DataTweakFloat2 (e.g. TonemappingBounds) into two DataTweakFloat (Min/Max) copies the
+        source's single uid onto both -> a duplicate. v12's baking loader keys tweaks by uid,
+        so a collision leaves one value pointer null and it crashes (null deref). Reassign any
+        duplicate to (max uid in the list)+1, which can't collide with the existing ones."""
+        max_uid = 0
+        for e in elems:
+            if isinstance(e, tuple) and e[0] == "object" and e[1]:
+                for fn, _tc, v in e[1][1]:
+                    if fn == "uid" and isinstance(v, tuple) and v[0] == "primitive":
+                        max_uid = max(max_uid, int.from_bytes(v[2], "little"))
+        seen = set()
+        out = []
+        for e in elems:
+            if isinstance(e, tuple) and e[0] == "object" and e[1]:
+                name, fields = e[1]
+                new_fields = list(fields)
+                for i, (fn, tc, v) in enumerate(new_fields):
+                    if fn == "uid" and isinstance(v, tuple) and v[0] == "primitive":
+                        u = int.from_bytes(v[2], "little")
+                        if u in seen:
+                            max_uid += 1
+                            u = max_uid
+                            new_fields[i] = (fn, tc, ("primitive", v[1], u.to_bytes(len(v[2]), "little")))
+                        seen.add(u)
+                        break
+                e = ("object", (name, new_fields))
+            out.append(e)
+        return out
+
     def _split_tonemapping_bounds(self, obj):
         obj_name, fields = obj
         if obj_name != "DataTweakFloat2":
@@ -288,6 +319,8 @@ class TransformMixin:
                         if ident and ident in self.identifier_blacklist:
                             continue
                         new_elems.append(("object", filtered))
+                    if obj_name == "BakingTweakList" and name == "tweaks":
+                        new_elems = self._dedupe_tweak_uids(new_elems)
                     value = ("array", ("object", new_elems))
                     if (obj_name and f"{obj_name}.{name}" in self.CASCADE_DROP_IF_EMPTY_ARRAY
                             and elems and not new_elems):

@@ -1,12 +1,11 @@
-"""An elegant, non-blocking progress dialog for the long-running pack/build subprocess.
+"""A non-blocking progress dialog for the long-running pack/build subprocess.
 
-The work runs on a plain background thread and pushes updates into a queue; a Qt timer
-on the UI thread drains it and updates a status line + progress bar. This sidesteps the
-cross-thread Qt signal pitfalls (and the 'define a QThread subclass after a lazy import'
-awkwardness) while keeping the UI responsive. PySide6 on newer Painter, PySide2 on older.
+The converter runs as a QProcess driven by Qt's event loop on the main thread -- no Python
+background thread, so there is no extra thread/thread-state for the embedded interpreter to
+tear down at shutdown (a leftover one crashes Painter in PyErr_Fetch on exit). PySide6 on
+newer Painter, PySide2 on older.
 """
-import threading
-import queue
+from . import runner
 
 
 def _qt():
@@ -69,25 +68,11 @@ def _make_bar(QtCore, QtGui, QtWidgets):
     return _Bar()
 
 
-def run_with_progress(parent, title, work):
-    """Show a modal progress dialog while `work(on_progress)` runs on a worker thread.
-
-    work(on_progress) must return (ok: bool, err: str). It should call
-    on_progress(frac, message): frac in [0,1] for a determinate bar, or None to keep
-    the bar 'busy'/indeterminate while still updating the message.
-
-    Returns (ok, err).
-    """
+def run_with_progress(parent, title, argv, env_extra=None):
+    """Show a modal progress dialog while `argv` runs as a QProcess. Parses the tool's
+    __USPP_PROGRESS__ lines (and phase prefixes) to drive the bar/status. Returns (ok, err)."""
     QtCore, QtGui, QtWidgets = _qt()
-    q = queue.Queue()
     out = {"ok": False, "err": ""}
-
-    def worker():
-        try:
-            ok, err = work(lambda frac, msg: q.put(("step", frac, msg)))
-        except Exception as e:  # never let the worker die silently
-            ok, err = False, str(e)
-        q.put(("done", ok, err))
 
     dlg = QtWidgets.QDialog(parent)
     dlg.setWindowTitle("Universal SPP")
@@ -112,33 +97,64 @@ def run_with_progress(parent, title, work):
     bar = _make_bar(QtCore, QtGui, QtWidgets)   # starts indeterminate (busy)
     lay.addWidget(bar)
 
-    t = threading.Thread(target=worker, daemon=True)
-    t.start()
+    proc = QtCore.QProcess(dlg)
+    proc.setProcessChannelMode(QtCore.QProcess.MergedChannels)   # one stream, no pipe deadlock
+    env = QtCore.QProcessEnvironment.systemEnvironment()
+    env.insert("USPP_PROGRESS", "1")
+    for k, v in (env_extra or {}).items():
+        env.insert(k, v)
+    proc.setProcessEnvironment(env)
+    # Don't flash a console window for the child console exe (Windows).
+    if hasattr(proc, "setCreateProcessArgumentsModifier"):
+        proc.setCreateProcessArgumentsModifier(
+            lambda a: setattr(a, "flags", a.flags | 0x08000000))   # CREATE_NO_WINDOW
 
-    def tick():
-        bar.pulse()                       # keep the marquee moving when indeterminate
-        try:
-            while True:
-                item = q.get_nowait()
-                if item[0] == "step":
-                    _, frac, msg = item
-                    if msg:
-                        status_lbl.setText(msg)
-                    if frac is None:
-                        bar.set_busy()
-                    else:
-                        bar.set_fraction(frac)
-                elif item[0] == "done":
-                    out["ok"], out["err"] = item[1], item[2]
-                    timer.stop()
-                    dlg.accept()
-                    return
-        except queue.Empty:
-            pass
+    log = []
+    buf = {"s": ""}
 
-    timer = QtCore.QTimer(dlg)
-    timer.timeout.connect(tick)
+    def handle(line):
+        if line.startswith(runner._PROGRESS_TAG):
+            parts = line.split("\t")
+            if len(parts) >= 3:
+                try:
+                    f = float(parts[1])
+                    bar.set_busy() if f < 0 else bar.set_fraction(f)
+                    if parts[2]:
+                        status_lbl.setText(parts[2])
+                except Exception:
+                    pass
+            return
+        if line:
+            log.append(line)
+            for prefix, friendly in runner._PHASES:
+                if prefix in line:
+                    status_lbl.setText(friendly)
+                    break
+
+    def on_read():
+        buf["s"] += bytes(proc.readAllStandardOutput()).decode("utf-8", "replace")
+        while "\n" in buf["s"]:
+            line, buf["s"] = buf["s"].split("\n", 1)
+            handle(line.rstrip("\r"))
+
+    def on_finished(code, status):
+        on_read()
+        out["ok"] = (code == 0 and status == QtCore.QProcess.NormalExit)
+        out["err"] = "" if out["ok"] else ("\n".join(log[-10:]) or f"exited {code}")
+        timer.stop()
+        dlg.accept()
+
+    proc.readyReadStandardOutput.connect(on_read)
+    proc.finished.connect(on_finished)
+
+    timer = QtCore.QTimer(dlg)          # UI-only: animate the marquee while indeterminate
+    timer.timeout.connect(bar.pulse)
     timer.start(40)
 
+    proc.start(argv[0], list(argv[1:]))
     (dlg.exec if hasattr(dlg, "exec") else dlg.exec_)()
+    # Destroy promptly rather than leaving these parented to the main window until app
+    # shutdown, where PySide teardown against the finalizing interpreter can crash.
+    proc.deleteLater()
+    dlg.deleteLater()
     return out["ok"], out["err"]

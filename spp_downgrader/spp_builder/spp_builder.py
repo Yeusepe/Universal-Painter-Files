@@ -403,14 +403,17 @@ class SPPBuilder:
         if data_file in zf.namelist():
             raw_data = zf.read(data_file)
 
-        # Patch projectsettings.ini when downgrading
-        if raw_data is not None and self.target_major and self.target_major <= 10:
-            if path == 'projectsettings.ini':
+        # On ANY downgrade, restamp projectsettings.ini's version: the opening Painter must
+        # never be told the project was saved by a NEWER build than itself -- it loads, then
+        # crashes (e.g. v12.0 opening a 12.1-stamped project). The projectUUID strip is a
+        # separate v10-and-below concern.
+        if raw_data is not None and self.target_major and path == 'projectsettings.ini':
+            if self.target_major <= 10:
                 # Strip v11-only settings records (e.g. projectUUID) that v10's
-                # ProjectManagement loader does not expect; then patch the version.
+                # ProjectManagement loader does not expect.
                 raw_data = self._strip_projectsettings_fields(raw_data, ('projectUUID',))
-                raw_data = self._patch_projectsettings_ini(raw_data, self.target_major, 0)
-                data_modified = True
+            raw_data = self._patch_projectsettings_ini(raw_data, self.target_major, 0)
+            data_modified = True
 
         # Patch embedded GLSL shaders for v10-and-below: inject compatibility stubs for
         # shader-helper functions that exist in v11/v12's libs but not the older runtime

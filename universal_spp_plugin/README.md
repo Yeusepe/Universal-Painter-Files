@@ -1,67 +1,190 @@
-# Universal SPP plugin for Adobe Substance 3D Painter software
+# Universal SPP Plugin
 
-Open and save `.uspp` universal project files across installed versions of Adobe
-Substance 3D Painter software. A `.uspp` stores the project plus the version it
-was authored in; when you open it, the plugin converts it to your installed
-version automatically.
+This folder is the Painter-side part of Universal SPP. It adds a **Universal**
+menu to Adobe Substance 3D Painter software and connects that menu to the bundled
+converter executable.
+
+The plugin keeps the UI small on purpose:
+
+- **Save as Universal...** packs the current saved `.spp` into a `.uspp`.
+- **Open Universal...** opens a `.uspp`, plans the conversion for the running
+  Painter version, shows any lossy downgrade warning, builds a temporary `.spp`,
+  and opens that copy.
+
+The plugin does not contain the conversion logic itself. It is a thin Qt/Painter
+integration layer over `bin/uspp_tool.exe`.
 
 > [!IMPORTANT]
 > Universal SPP is unofficial and is not affiliated with, endorsed by, sponsored
 > by, or authorized by Adobe. It does not include Adobe software, logos, product
-> icons, documentation, sample project files, or license/activation bypasses. Use
-> it only with project files you own or have permission to process. See
+> icons, documentation, sample project files, or license or activation bypasses.
+> Use it only with project files you own or have permission to process. See
 > [../NOTICE.md](../NOTICE.md).
 
-## Install (clients)
+## Install
 
-1. **Get the converter (`bin/uspp_tool.exe`).** It is not shipped inside the repo.
-   Either download it from the project's **GitHub Releases** page and drop it into
-   `universal_spp_plugin/bin/`, or build it from source with `build.ps1` (see the
-   repo's top-level README). The plugin won't run without it.
-2. In the application, open the **Python** menu, then **Plugins Folder**. This opens
-   the correct folder for your machine; the path varies, and OneDrive may redirect
-   Documents. Go into the `plugins` subfolder. Python plugins must live in
-   `python/plugins/` (typically `.../Documents/Adobe/Adobe Substance 3D Painter/python/plugins/`).
-3. Copy the whole `universal_spp_plugin` folder (including `bin/uspp_tool.exe`) in, so you
-   have `python/plugins/universal_spp_plugin/__init__.py`.
-4. **Python** menu, then **Reload Plugins Folder** (or restart the application).
-5. In the **Python** menu, make sure `universal_spp_plugin` is enabled. A
-   **Universal** menu appears in the menu bar.
+1. Get `bin/uspp_tool.exe`.
+   - From a release: download the release build and keep the included
+     `universal_spp_plugin/bin/uspp_tool.exe`.
+   - From source: run `build.ps1` from the repository root. It builds the
+     converter and copies it into this plugin folder.
+2. In Painter, open **Python > Plugins Folder**.
+3. Open the `plugins` subfolder.
+4. Copy the whole `universal_spp_plugin` folder into that `plugins` folder.
+5. Confirm this file exists:
 
-(Optional) To install elsewhere, set the `SUBSTANCE_PAINTER_PLUGINS_PATH` env var to a root
-folder containing the `plugins`, `modules`, `assets` subfolders.
+   ```text
+   python/plugins/universal_spp_plugin/__init__.py
+   ```
 
-> Supported application versions: 8.1-12.1. No admin rights and no DLL injection;
-> this is a regular Python plugin that calls a bundled converter.
+6. Confirm the converter exists:
+
+   ```text
+   python/plugins/universal_spp_plugin/bin/uspp_tool.exe
+   ```
+
+7. In Painter, choose **Python > Reload Plugins Folder**, or restart Painter.
+8. In the **Python** menu, make sure `universal_spp_plugin` is enabled.
+
+After the plugin starts, Painter shows a **Universal** menu in the menu bar. The
+plugin also tries to add **Save as Universal (.uspp)...** to Painter's **File**
+menu.
+
+Optional: if you use a custom plugin root, set
+`SUBSTANCE_PAINTER_PLUGINS_PATH` to a folder that contains Painter's expected
+`plugins`, `modules`, and `assets` subfolders.
 
 ## Use
 
-- **Universal > Open Universal...** - pick a `.uspp`. The plugin detects your installed
-  version and:
-  - If the file is from a newer version, it converts it down to yours. A popup
-    first lists what will be lost or changed. Conversion is lossy and one-way.
-    Your `.uspp` is never modified.
-  - If the file is from your version or older, it opens directly (the application
-    upgrades older projects on open).
-- **Universal > Save as Universal...** - save your current, already-saved project as a
-  `.uspp` to distribute. Author from your highest installed version so the file can be
-  downgraded for everyone else.
+### Save a `.uspp`
 
-## How it works
+1. Open a project in Painter.
+2. Save it normally as a `.spp` first.
+3. Choose **Universal > Save as Universal...**.
+4. Pick the output `.uspp` path.
 
-`.uspp` is a lossless ZIP of the full project plus a manifest carrying the
-authoring version and the list of versions it can convert to. The bundled
-`bin/uspp_tool.exe` is self-contained, so client machines do not need Python. The
-plugin itself is a thin UI layer over the schema-driven downgrade engine.
+The plugin packs from the `.spp` file on disk. If Painter reports unsaved
+changes, the plugin tries to save first, but the hard requirement is still that
+the project already has a real file path.
 
-## For maintainers
+### Open a `.uspp`
 
-- The converter source is `spp_downgrader/uspp_tool.py` (subcommands `pack`/`plan`/
-  `build`/`info`). Rebuild the exe with: `cd spp_downgrader && pyinstaller uspp_tool.spec
-  --noconfirm`, then copy `dist/uspp_tool.exe` into `universal_spp_plugin/bin/`.
-- Plain-English loss messages live in `spp_downgrader/lossiness_messages.json` (edit
-  freely; uncurated entries still produce readable text).
-- Adding a new application version = author one adjacent migration profile (see
-  `spp_downgrader/README.md`), rebuild the exe. Non-adjacent jumps compose automatically.
-- Dev/testing: set env `USPP_TOOL` to the `.py` CLI (e.g.
-  `H:/path/to/spp_downgrader/uspp_tool.py`) to run the plugin against source instead of the exe.
+1. Choose **Universal > Open Universal...**.
+2. Pick a `.uspp`.
+3. Review the warning if the target conversion is lossy.
+4. Confirm the conversion.
+
+The plugin detects the running Painter version, asks the converter for a plan,
+then builds a temporary `.spp` in the system temp directory under `USPPCache`.
+The source `.uspp` is not modified.
+
+If the `.uspp` was authored in an older version than the one you are running,
+the converter rebuilds the stored project and lets Painter perform its normal
+native upgrade when opening it.
+
+## How The Plugin Is Written
+
+The plugin is split so the Painter and Qt code stays away from the converter
+process code.
+
+| File | Role |
+| --- | --- |
+| [`__init__.py`](__init__.py) | Painter plugin entry point. Creates menus, actions, event hooks, open/save handlers, temp file paths, and cache cleanup. |
+| [`lib/runner.py`](lib/runner.py) | Finds and runs `uspp_tool.exe` or `USPP_TOOL`. Streams progress, captures errors, and never uses shell splitting. |
+| [`lib/version.py`](lib/version.py) | Detects the running Painter version from the Painter API when available, then falls back to parsing the install path. |
+| [`lib/dialogs.py`](lib/dialogs.py) | Qt dialogs for file picking, errors, info messages, and lossy conversion confirmation. |
+| [`lib/progress.py`](lib/progress.py) | Progress dialog wrapper around the long-running converter calls. |
+
+### Open Flow
+
+`on_open()` asks for a `.uspp`, then `_open_path()` does the real work:
+
+1. Check that the converter is available.
+2. Detect the running Painter version, such as `10`, `12`, or `12.1`.
+3. Run:
+
+   ```text
+   uspp_tool.exe plan --uspp <file.uspp> --target <running-version>
+   ```
+
+4. Stop if no profile path exists.
+5. Show the lossy conversion warning if the plan says the downgrade removes
+   unsupported data.
+6. Run:
+
+   ```text
+   uspp_tool.exe build --uspp <file.uspp> --target <running-version> -o <temp.spp>
+   ```
+
+7. Open the temporary `.spp` with `substance_painter.project.open()`.
+
+If Painter refuses to open because another dirty project is loaded, the plugin
+asks before closing the current project and retrying.
+
+### Save Flow
+
+`on_save()` is intentionally conservative:
+
+1. Check that a project is open.
+2. Check that the project already has a saved `.spp` path.
+3. Best-effort save the current project if Painter reports unsaved changes.
+4. Ask where to write the `.uspp`.
+5. Run:
+
+   ```text
+   uspp_tool.exe pack <project.spp> -o <output.uspp>
+   ```
+
+Because packing reads the `.spp` file directly, an unsaved temporary Painter
+scene cannot be exported until it has been saved once.
+
+### Double-Click Support
+
+On Windows, the plugin tries to register a per-user `.uspp` file association in
+`HKCU\Software\Classes`. The command is the currently running Painter executable
+with the `.uspp` path as its first argument.
+
+When Painter starts from a double-click, the plugin waits until the GUI is ready,
+reads `QApplication.arguments()`, finds the `.uspp` path, and opens it through
+the same `_open_path()` flow used by the menu.
+
+This is best effort. It does not require admin rights. If registration is
+blocked, the menu still works.
+
+## Developer Mode
+
+Set `USPP_TOOL` to run the plugin against a source checkout instead of the
+bundled executable:
+
+```powershell
+$env:USPP_TOOL = "C:\path\to\universal-spp\spp_downgrader\uspp_tool.py"
+```
+
+If `USPP_TOOL` ends in `.py`, `runner.py` launches it with the current Python
+interpreter. If it points to an `.exe`, it runs that executable directly.
+
+Useful rebuild command from the repository root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File build.ps1
+```
+
+That command builds `spp_downgrader/dist/uspp_tool.exe` and stages it into
+`universal_spp_plugin/bin/uspp_tool.exe`.
+
+## Troubleshooting
+
+| Problem | Check |
+| --- | --- |
+| **Universal menu does not appear** | Confirm the folder is installed as `python/plugins/universal_spp_plugin/`, then reload plugins and enable it in the **Python** menu. |
+| **Converter not found** | Confirm `bin/uspp_tool.exe` exists inside the plugin folder, or set `USPP_TOOL` during development. |
+| **Project must be saved first** | Save the Painter project as a `.spp`, then run **Save as Universal...** again. |
+| **Conversion is reported as unsupported** | The source version cannot reach the target version through the profiles currently shipped in `spp_downgrader/profiles/`. |
+| **Loss warning appears** | The target version is older and cannot represent some source data. The warning is generated from the active downgrade profile. |
+| **Double-click does not open `.uspp`** | Open from the **Universal** menu. File association is best effort and can be blocked by system policy. |
+
+Supported conversion profile chain:
+
+```text
+12.1 -> 12 -> 11 -> 10 -> 9 -> 8.1
+```
