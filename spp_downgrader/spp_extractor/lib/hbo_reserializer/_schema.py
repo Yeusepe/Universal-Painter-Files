@@ -11,8 +11,18 @@ class SchemaMixin:
             return obj
         obj_name, fields = obj
         if fields is None:
-            return (obj_name, None)
-        fields = [self._project_field_value(f, depth) for f in fields]
+            return obj
+        pf = None
+        for i, f in enumerate(fields):
+            nf = self._project_field_value(f, depth)
+            if nf is f:
+                if pf is not None:
+                    pf.append(f)
+            else:
+                if pf is None:
+                    pf = list(fields[:i])
+                pf.append(nf)
+        fields = fields if pf is None else pf
         schema = runtime.V10_SCHEMA.get(obj_name)
         if schema:
             order = {name: i for i, name in enumerate(schema)}
@@ -28,7 +38,7 @@ class SchemaMixin:
                         allowed.append(syn)
             allowed.sort(key=lambda f: order.get(f[0], len(order)))
             return (obj_name, allowed)
-        return (obj_name, fields)
+        return obj if pf is None else (obj_name, fields)
 
     @staticmethod
     def _deser_default(sv):
@@ -70,6 +80,7 @@ class SchemaMixin:
     def _project_field_value(self, field, depth):
         name, tcode, value = field[0], field[1], field[2]
         kind = value[0]
+        nv = value
         if kind == "object":
             child = value[1]
             if isinstance(child, tuple):
@@ -78,18 +89,25 @@ class SchemaMixin:
                 # that as a null pointer (0xFF), not an empty object body. Generic
                 # rule: empty + nameless object -> v10 null.
                 if not cname and not cfields:
-                    value = ("object_null", b"")
+                    nv = ("object_null", b"")
                 else:
-                    value = ("object", self._project_obj_to_v10_schema(child, depth + 1))
+                    nchild = self._project_obj_to_v10_schema(child, depth + 1)
+                    if nchild is not child:
+                        nv = ("object", nchild)
         elif kind == "array":
             elem_kind, elems = value[1]
             if elem_kind == "object":
-                new_elems = []
-                for elem in elems:
+                nelems = None
+                for i, elem in enumerate(elems):
                     if elem[0] == "object" and isinstance(elem[1], tuple):
-                        new_elems.append(("object", self._project_obj_to_v10_schema(elem[1], depth + 1)))
-                    else:
-                        new_elems.append(elem)
-                value = ("array", ("object", new_elems))
-        return (name, tcode, value)
-
+                        ne = self._project_obj_to_v10_schema(elem[1], depth + 1)
+                        if ne is not elem[1]:
+                            if nelems is None:
+                                nelems = list(elems[:i])
+                            nelems.append(("object", ne))
+                            continue
+                    if nelems is not None:
+                        nelems.append(elem)
+                if nelems is not None:
+                    nv = ("array", ("object", nelems))
+        return field if nv is value else (name, tcode, nv)

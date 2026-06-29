@@ -265,13 +265,17 @@ class TransformMixin:
                             _u = _cv[1].decode("utf-8", "replace").lower()
                             if any(g in _u for g in runtime.DROP_SUBSTANCE_GRAPHS):
                                 return None  # cascade: drops the source, empties/drops its fill
-        new_fields = []
-        for name, tcode, value in fields:
+        new_fields = None
+        for i, (name, tcode, value) in enumerate(fields):
+            f = fields[i]
             # Bare name removes the field everywhere; "Type.field" removes it only
             # inside that object type (needed for common names like "enabled" that
             # are only invalid on a specific v11 object).
             if name in blacklist or (obj_name and f"{obj_name}.{name}" in blacklist):
+                if new_fields is None:
+                    new_fields = list(fields[:i])
                 continue
+            nv = value
             kind = value[0]
             if kind == "string" and name in self.value_rewrites:
                 try:
@@ -279,54 +283,72 @@ class TransformMixin:
                 except Exception:
                     s = None
                 if s in self.value_rewrites[name]:
-                    repl = self.value_rewrites[name][s]
-                    value = ("string", repl.encode("utf-8"))
+                    nv = ("string", self.value_rewrites[name][s].encode("utf-8"))
             if kind == "object":
-                _, (child_name, child_fields) = value
+                child = value[1]
+                child_name = child[0]
                 if child_name in blacklist:        # field holds an object of a dropped type
                     if obj_name and f"{obj_name}.{name}" in self.CASCADE_DROP_PARENT_FIELDS:
                         return None                # required source dropped -> drop this whole object
+                    if new_fields is None:
+                        new_fields = list(fields[:i])
                     continue
-                if child_fields is None:
-                    value = ("object", (child_name, None))
-                else:
-                    filtered_child = self._filter_v11_fields((child_name, child_fields), blacklist, depth + 1)
+                if child[1] is not None:
+                    filtered_child = self._filter_v11_fields(child, blacklist, depth + 1)
                     if filtered_child is None:     # nested object cascade-dropped
                         if obj_name and f"{obj_name}.{name}" in self.CASCADE_DROP_PARENT_FIELDS:
                             return None
+                        if new_fields is None:
+                            new_fields = list(fields[:i])
                         continue                   # drop this now-empty field
-                    value = ("object", filtered_child)
+                    if filtered_child is not child:
+                        nv = ("object", filtered_child)
             elif kind == "array":
                 elem_kind, elems = value[1]
                 if elem_kind == "object":
                     new_elems = []
+                    arr_changed = False
                     for elem in elems:
-                        _, (child_name, child_fields) = elem
+                        child = elem[1]
+                        child_name = child[0]
                         if child_name in blacklist:  # drop array elements of a dropped type
+                            arr_changed = True
                             continue
-                        filtered = self._filter_v11_fields((child_name, child_fields), blacklist, depth + 1)
+                        filtered = self._filter_v11_fields(child, blacklist, depth + 1)
                         if filtered is None:       # element cascade-dropped (required child blacklisted)
+                            arr_changed = True
                             continue
                         split = self._split_tonemapping_bounds(filtered)
                         if split:
-                            for obj in split:
-                                ident = self._extract_identifier(obj)
+                            arr_changed = True
+                            for o in split:
+                                ident = self._extract_identifier(o)
                                 if ident and ident in self.identifier_blacklist:
                                     continue
-                                new_elems.append(("object", obj))
+                                new_elems.append(("object", o))
                             continue
                         ident = self._extract_identifier(filtered)
                         if ident and ident in self.identifier_blacklist:
+                            arr_changed = True
                             continue
-                        new_elems.append(("object", filtered))
+                        if filtered is not child:
+                            arr_changed = True
+                            new_elems.append(("object", filtered))
+                        else:
+                            new_elems.append(elem)
                     if obj_name == "BakingTweakList" and name == "tweaks":
                         new_elems = self._dedupe_tweak_uids(new_elems)
-                    value = ("array", ("object", new_elems))
+                        arr_changed = True
                     if (obj_name and f"{obj_name}.{name}" in self.CASCADE_DROP_IF_EMPTY_ARRAY
                             and elems and not new_elems):
                         return None  # required source array fully emptied -> drop this object
-            new_fields.append((name, tcode, value))
-        return (obj_name, new_fields)
+                    if arr_changed:
+                        nv = ("array", ("object", new_elems))
+            if nv is not value and new_fields is None:
+                new_fields = list(fields[:i])
+            if new_fields is not None:
+                new_fields.append((name, tcode, nv) if nv is not value else f)
+        return obj if new_fields is None else (obj_name, new_fields)
 
     def _normalize_fields(self, fields):
         out = []
@@ -344,29 +366,40 @@ class TransformMixin:
     def _strip_fields_recursive(self, obj):
         obj_name, fields = obj
         if fields is None:
-            return (obj_name, None)
-        new_fields = []
-        for f in fields:
-            if len(f) == 4:
-                name, tcode, value, _ = f
-            else:
-                name, tcode, value = f
+            return obj
+        new_fields = None
+        for i, f in enumerate(fields):
+            is4 = len(f) == 4
+            name, tcode, value = f[0], f[1], f[2]
+            nv = value
             kind = value[0]
             if kind == "object":
-                child_name, child_fields = value[1]
-                value = ("object", self._strip_fields_recursive((child_name, child_fields)))
+                child = value[1]
+                nchild = self._strip_fields_recursive(child)
+                if nchild is not child:
+                    nv = ("object", nchild)
             elif kind == "array":
                 elem_kind, elems = value[1]
                 if elem_kind == "object":
-                    new_elems = []
-                    for elem in elems:
+                    nelems = None
+                    for j, elem in enumerate(elems):
                         if elem[0] == "object":
-                            new_elems.append(("object", self._strip_fields_recursive(elem[1])))
-                        else:
-                            new_elems.append(elem)
-                    value = ("array", ("object", new_elems))
-            new_fields.append((name, tcode, value))
-        return (obj_name, new_fields)
+                            ne = self._strip_fields_recursive(elem[1])
+                            if ne is not elem[1]:
+                                if nelems is None:
+                                    nelems = list(elems[:j])
+                                nelems.append(("object", ne))
+                                continue
+                        if nelems is not None:
+                            nelems.append(elem)
+                    if nelems is not None:
+                        nv = ("array", ("object", nelems))
+            changed = is4 or (nv is not value)
+            if changed and new_fields is None:
+                new_fields = list(fields[:i])
+            if new_fields is not None:
+                new_fields.append((name, tcode, nv) if changed else f)
+        return obj if new_fields is None else (obj_name, new_fields)
 
     def _drop_unknown_members(self, obj):
         """Drop members whose name is absent from the target version's binary (i.e. added
@@ -379,68 +412,103 @@ class TransformMixin:
             return obj
         obj_name, fields = obj
         if fields is None:
-            return (obj_name, None)
-        new_fields = []
-        for f in fields:
+            return obj
+        new_fields = None
+        for i, f in enumerate(fields):
             name, tcode, value = f[0], f[1], f[2]
             if name and name not in members:
+                if new_fields is None:
+                    new_fields = list(fields[:i])
                 continue  # member does not exist in the target version -> drop it
+            nv = value
             kind = value[0]
             if kind == "object":
-                child_name, child_fields = value[1]
-                value = ("object", self._drop_unknown_members((child_name, child_fields)))
+                child = value[1]
+                nchild = self._drop_unknown_members(child)
+                if nchild is not child:
+                    nv = ("object", nchild)
             elif kind == "array":
                 elem_kind, elems = value[1]
                 if elem_kind == "object":
-                    new_elems = []
-                    for elem in elems:
+                    nelems = None
+                    for j, elem in enumerate(elems):
                         if elem[0] == "object":
-                            new_elems.append(("object", self._drop_unknown_members(elem[1])))
-                        else:
-                            new_elems.append(elem)
-                    value = ("array", ("object", new_elems))
-            new_fields.append((name, tcode, value))
-        return (obj_name, new_fields)
+                            ne = self._drop_unknown_members(elem[1])
+                            if ne is not elem[1]:
+                                if nelems is None:
+                                    nelems = list(elems[:j])
+                                nelems.append(("object", ne))
+                                continue
+                        if nelems is not None:
+                            nelems.append(elem)
+                    if nelems is not None:
+                        nv = ("array", ("object", nelems))
+            if nv is not value and new_fields is None:
+                new_fields = list(fields[:i])
+            if new_fields is not None:
+                new_fields.append((name, tcode, nv) if nv is not value else f)
+        return obj if new_fields is None else (obj_name, new_fields)
 
     def _apply_transforms_recursive(self, obj, keep_overrides=False):
         obj_name, fields = obj
-        fields4 = self._normalize_fields(fields)
-        new_fields = []
-        for name, tcode, value, overridden in fields4:
+        if fields is None:
+            return obj
+        rec = None
+        for i, f in enumerate(fields):
+            value = f[2]
             kind = value[0]
+            nv = value
             if kind == "object":
-                child_name, child_fields = value[1]
-                if child_fields is not None:
-                    child = self._apply_transforms_recursive((child_name, child_fields), keep_overrides)
-                    value = ("object", child)
+                child = value[1]
+                if child[1] is not None:
+                    nchild = self._apply_transforms_recursive(child, keep_overrides)
+                    if nchild is not child:
+                        nv = ("object", nchild)
             elif kind == "array":
                 elem_kind, elems = value[1]
                 if elem_kind == "object":
-                    new_elems = []
-                    for elem in elems:
-                        if elem[0] == "object":
-                            child_name, child_fields = elem[1]
-                            if child_fields is not None:
-                                child = self._apply_transforms_recursive((child_name, child_fields), keep_overrides)
-                                new_elems.append(("object", child))
-                            else:
-                                new_elems.append(elem)
-                        else:
-                            new_elems.append(elem)
-                    value = ("array", ("object", new_elems))
-            new_fields.append((name, tcode, value, overridden))
+                    nelems = None
+                    for j, elem in enumerate(elems):
+                        if elem[0] == "object" and elem[1][1] is not None:
+                            ne = self._apply_transforms_recursive(elem[1], keep_overrides)
+                            if ne is not elem[1]:
+                                if nelems is None:
+                                    nelems = list(elems[:j])
+                                nelems.append(("object", ne))
+                                continue
+                        if nelems is not None:
+                            nelems.append(elem)
+                    if nelems is not None:
+                        nv = ("array", ("object", nelems))
+            if nv is not value:
+                if rec is None:
+                    rec = list(fields[:i])
+                rec.append((f[0], f[1], nv) + tuple(f[3:]))
+            elif rec is not None:
+                rec.append(f)
+        base_fields = fields if rec is None else rec
 
-        if runtime.FIELD_RENAME or runtime.FIELD_RETYPE or runtime.FIELD_REKIND or runtime.FIELD_VALUE_TRANSFORM:
-            new_fields = self._apply_field_xforms(obj_name, new_fields)
+        has_field_maps = (runtime.FIELD_RENAME or runtime.FIELD_RETYPE
+                          or runtime.FIELD_REKIND or runtime.FIELD_VALUE_TRANSFORM)
+        needs = self._needs_transform(obj_name)
 
-        if self._needs_transform(obj_name):
-            obj_name, new_fields = self._apply_downgrade_transforms(obj_name, new_fields)
+        if has_field_maps:
+            base_fields = self._apply_field_xforms(obj_name, base_fields)
 
-        obj_name = runtime.TYPE_RENAME.get(obj_name, obj_name)
+        # Only downgrade transforms need the 4-tuple override marker.
+        if needs:
+            obj_name, new_fields = self._apply_downgrade_transforms(obj_name, self._normalize_fields(base_fields))
+            obj_name = runtime.TYPE_RENAME.get(obj_name, obj_name)
+            if keep_overrides:
+                return (obj_name, new_fields)
+            return self._strip_fields_recursive((obj_name, new_fields))
 
+        new_name = runtime.TYPE_RENAME.get(obj_name, obj_name)
         if keep_overrides:
-            return (obj_name, new_fields)
-        return self._strip_fields_recursive((obj_name, new_fields))
+            return (new_name, self._normalize_fields(base_fields))
+        if rec is None and base_fields is fields and new_name == obj_name:
+            return obj
+        return (new_name, base_fields)
 
     def _narrow_primitives(self, obj, depth=0):
         """Blanket primitive downgrade: rewrite every primitive whose code is in
@@ -451,12 +519,18 @@ class TransformMixin:
         name, fields = obj
         if fields is None:
             return obj
-        out = []
-        for f in fields:
+        out = None
+        for i, f in enumerate(fields):
             nm, tc, val = f[0], f[1], f[2]
-            val, tc = self._narrow_val(val, tc, depth)
-            out.append((nm, tc, val) + tuple(f[3:]))
-        return (name, out)
+            nval, ntc = self._narrow_val(val, tc, depth)
+            if nval is val and ntc == tc:
+                if out is not None:
+                    out.append(f)
+            else:
+                if out is None:
+                    out = list(fields[:i])
+                out.append((nm, ntc, nval) + tuple(f[3:]))
+        return obj if out is None else (name, out)
 
     def _narrow_val(self, val, tc, depth):
         kind = val[0]
@@ -469,13 +543,23 @@ class TransformMixin:
             b = b[:size] if len(b) >= size else b + b"\x00" * (size - len(b))
             return ("primitive", to, b), to
         if kind == "object":
-            cn, cf = val[1]
-            if cf is None:
+            child = val[1]
+            if child[1] is None:
                 return val, tc
-            return ("object", self._narrow_primitives((cn, cf), depth + 1)), tc
+            nchild = self._narrow_primitives(child, depth + 1)
+            return (("object", nchild), tc) if nchild is not child else (val, tc)
         if kind == "array":
             ek, elems = val[1]
-            return ("array", (ek, [self._narrow_val(e, None, depth + 1)[0] for e in elems])), tc
+            nelems = None
+            for i, e in enumerate(elems):
+                ne = self._narrow_val(e, None, depth + 1)[0]
+                if ne is not e:
+                    if nelems is None:
+                        nelems = list(elems[:i])
+                    nelems.append(ne)
+                elif nelems is not None:
+                    nelems.append(e)
+            return (("array", (ek, nelems)), tc) if nelems is not None else (val, tc)
         return val, tc
 
     def _apply_field_xforms(self, obj_name, fields4):
@@ -483,8 +567,11 @@ class TransformMixin:
         source type+field): runtime.FIELD_RETYPE resizes a primitive whose type/width changed
         across versions (e.g. channelTypes 16B->8B, truncating to the target width);
         runtime.FIELD_RENAME renames a member so it survives projection under the new name."""
-        out = []
-        for name, tcode, value, overridden in fields4:
+        out = None
+        for idx in range(len(fields4)):
+            f = fields4[idx]
+            name, tcode, value = f[0], f[1], f[2]
+            ovalue, otcode = value, tcode
             vt = runtime.FIELD_VALUE_TRANSFORM.get(f"{obj_name}.{name}")
             # Idempotent guard: only transform when the source is NOT already in the target
             # representation (value[1] != to_code). Prevents double-converting an already-
@@ -514,8 +601,15 @@ class TransformMixin:
             new = runtime.FIELD_RENAME.get(f"{obj_name}.{name}")
             if new is None and "." not in name:
                 new = runtime.FIELD_RENAME.get(name)
-            out.append((new or name, tcode, value, overridden))
-        return out
+            fname = new or name
+            if fname == name and value is ovalue and tcode == otcode:
+                if out is not None:
+                    out.append(f)
+            else:
+                if out is None:
+                    out = list(fields4[:idx])
+                out.append((fname, tcode, value) + tuple(f[3:]))
+        return fields4 if out is None else out
 
     def _apply_targeted_overrides(self, obj):
         obj_name, fields = obj
@@ -546,23 +640,43 @@ class TransformMixin:
 
             return ("object", (tf_name, tf_fields))
 
-        new_fields = []
-        for name, tcode, value in fields:
+        rec = None
+        for i, (name, tcode, value) in enumerate(fields):
+            nv = value
             kind = value[0]
             if kind == "object":
-                value = ("object", self._apply_targeted_overrides(value[1]))
+                child = value[1]
+                nchild = self._apply_targeted_overrides(child)
+                if nchild is not child:
+                    nv = ("object", nchild)
             elif kind == "array":
                 elem_kind, elems = value[1]
                 if elem_kind == "object":
-                    new_elems = []
-                    for elem in elems:
+                    nelems = None
+                    for j, elem in enumerate(elems):
                         if elem[0] == "object":
-                            new_elems.append(("object", self._apply_targeted_overrides(elem[1])))
-                        else:
-                            new_elems.append(elem)
-                    value = ("array", ("object", new_elems))
-            new_fields.append((name, tcode, value))
-        fields = new_fields
+                            ne = self._apply_targeted_overrides(elem[1])
+                            if ne is not elem[1]:
+                                if nelems is None:
+                                    nelems = list(elems[:j])
+                                nelems.append(("object", ne))
+                                continue
+                        if nelems is not None:
+                            nelems.append(elem)
+                    if nelems is not None:
+                        nv = ("array", ("object", nelems))
+            if nv is not value:
+                if rec is None:
+                    rec = list(fields[:i])
+                rec.append((name, tcode, nv))
+            elif rec is not None:
+                rec.append(fields[i])
+        base_fields = fields if rec is None else rec
+
+        if obj_name not in ("DataStackActions", "DataSourceUniform", "DataTweakFloat", "Aluminum"):
+            return obj if rec is None else (obj_name, base_fields)
+        # Own a mutable list before the in-place _set_field_simple/_reorder calls below.
+        fields = list(base_fields) if rec is None else base_fields
 
         if obj_name == "DataStackActions":
             uid = self._extract_uid((obj_name, fields))
@@ -1170,4 +1284,3 @@ class TransformMixin:
                 self._set_field(fields, "strokes3D", strokes_field[1], ("array", ("object", elems)))
 
         return (new_name, fields)
-

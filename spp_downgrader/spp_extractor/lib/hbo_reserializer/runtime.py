@@ -101,7 +101,8 @@ def _extract_idents(exe_path):
     import re
     global _IDENT
     if _IDENT is None:
-        _IDENT = re.compile(rb"[A-Za-z_][A-Za-z0-9_]{1,40}")
+        # Single-character member names like DataTimelineKey.x are valid identifiers.
+        _IDENT = re.compile(rb"[A-Za-z_][A-Za-z0-9_]{0,40}")
     idents = set()
     with open(exe_path, "rb") as f:
         prev = b""
