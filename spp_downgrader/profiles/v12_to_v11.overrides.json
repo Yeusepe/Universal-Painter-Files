@@ -1,0 +1,4 @@
+{
+  "_comment": "Drop only the incompatible 3D-stroke STRUCTS (DataStroke3D + its keyframe DataStroke3DKey -- v11's keyframe uses 'pressure' not opacity/size). KEEP DataEmitterStroke3D: it's an entity (uid) whose members are all v11-valid AND it's a SINGLE-object field DataBrushStamp.stampsEmitter -- dropping the type removes that required field -> v11 null-derefs. strokes3D arrays just go empty.",
+  "blacklist": ["DataStroke3D", "DataStroke3DKey"]
+}

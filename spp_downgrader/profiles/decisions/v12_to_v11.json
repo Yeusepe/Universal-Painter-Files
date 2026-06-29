@@ -1,0 +1,21 @@
+{
+  "d118617e8dfc804e": {
+    "action": "baker_rename",
+    "decided_by": "interactive",
+    "decided_on": "2026-06-26",
+    "description": "VALUE_RENAME BakingTweakList bakerId",
+    "diff_kind": "VALUE_RENAME",
+    "value": {
+      "AmbientOcclusion": "GLMapBakerManager.AOFromDetail",
+      "BentNormals": "GLMapBakerManager.BentNormalsFromDetail",
+      "Color": "GLMapBakerManager.ColorFromDetail",
+      "Curvature": "GLMapBakerManager.Curvature1FromDetail",
+      "Height": "GLMapBakerManager.HeightFromDetail",
+      "Normal": "GLMapBakerManager.NormalFromDetail",
+      "NormalWS": "GLMapBakerManager.NormalWS",
+      "Opacity": "GLMapBakerManager.MaskFromDetail",
+      "Position": "GLMapBakerManager.Position",
+      "Thickness": "GLMapBakerManager.ThicknessFromDetail"
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "from": "10",
+  "to": "9",
+  "_comment": "AUTO-MAPPED from v10.0.0.spp vs v9.0.0.spp. Review TODO entries; edit freely (this file is the source of truth).",
+  "source_format": "inline",
+  "target_format": "inline",
+  "target_max_data_version": 78,
+  "data_version_map": {
+    "baking/baking.ini": 20,
+    "editor/camera.ini": 2,
+    "editor/colorprofile.ini": 0,
+    "editor/iraysettings.ini": 1,
+    "editor/layersstackstate.bin": 2,
+    "editor/posteffects.ini": 7,
+    "editor/viewersettings.ini": 26,
+    "paint/default_material.bin": 78,
+    "paint/document.bin": 78
+  },
+  "dataset_renames": {},
+  "blacklist": [],
+  "type_rename": {},
+  "field_rename": {},
+  "field_retype": {},
+  "baking_tweak_rename": {},
+  "baking_baker_id_rename": {},
+  "schema_file": "v9_schema.json",
+  "defaults_file": "v9_defaults.json"
+}

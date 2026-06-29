@@ -1,0 +1,6 @@
+# Normalize line endings: text files use LF in the repo.
+* text=auto eol=lf
+*.png binary
+*.spp binary
+*.uspp binary
+*.exe binary

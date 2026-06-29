@@ -1,0 +1,4 @@
+{
+  "_comment": "Same as v12->v11 for the 3D-stroke structs, applied for v10-and-below targets. Keep DataEmitterStroke3D (required single-object field on DataBrushStamp).",
+  "blacklist": ["DataStroke3D", "DataStroke3DKey"]
+}

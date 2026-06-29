@@ -1,0 +1,5 @@
+# Build + maintainer dependencies. Installing this also installs the runtime deps.
+-r requirements.txt
+pyinstaller    # builds bin/uspp_tool.exe (see build.ps1)
+py7zr          # optional runtime check; install at build time so the exe bundles it
+minidump       # only for debug/painter_crash.py (crash-dump analysis)

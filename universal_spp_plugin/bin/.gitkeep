@@ -1,0 +1,5 @@
+# The plugin runs uspp_tool.exe from this folder.
+# It is not committed (44 MB). Get it one of two ways:
+#   - Download from the GitHub Releases page and drop uspp_tool.exe here, or
+#   - Build it: run  build.ps1  at the repo root.
+# Override the location with the USPP_TOOL env var (see ../lib/runner.py).

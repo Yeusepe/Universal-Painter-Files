@@ -1,0 +1,50 @@
+{
+  "from": "12.1",
+  "to": "12",
+  "_comment": "AUTO-MAPPED from v12.1.0.spp vs v12.0.0.spp. Review TODO entries; edit freely (this file is the source of truth).",
+  "source_format": "registry",
+  "target_format": "registry",
+  "target_max_data_version": 89,
+  "data_version_map": {
+    "baking/baking.ini": 23,
+    "editor/camera.ini": 2,
+    "editor/colorprofile.ini": 0,
+    "editor/iraysettings2.ini": 2,
+    "editor/layersstackstate2.bin": 2,
+    "editor/posteffects.ini": 9,
+    "editor/viewersettings2.ini": 29,
+    "paint/default_material.bin": 89,
+    "paint/document.bin": 89
+  },
+  "dataset_renames": {},
+  "blacklist": [
+    "BakingSkewParameters"
+  ],
+  "type_rename": {},
+  "field_rename": {
+    "BakingSkewmapMaterialData.onlyActiveMaterials": "displayNormals"
+  },
+  "field_retype": {
+    "SettingsSolo.channelType": 12,
+    "DataActionGroup.channelTypes": 12,
+    "DataBlending.channelTypes": 12,
+    "DataActionFill.channelTypes": 12,
+    "DataActionPaint.channelTypes": 12,
+    "DataProceduralOutput.channelTypes": 12,
+    "DataSourceProcedural.channelTypes": 12,
+    "DataSourceUniform.channelTypes": 12
+  },
+  "field_rekind": {
+    "DataActionPaint.sourceTransparent": "array"
+  },
+  "field_value_transform": {
+    "DataChannel.type": {
+      "op": "enum_to_bitmask",
+      "code": 21
+    }
+  },
+  "baking_tweak_rename": {},
+  "baking_baker_id_rename": {},
+  "schema_file": "v12_schema.json",
+  "defaults_file": "v12_defaults.json"
+}

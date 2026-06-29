@@ -1,0 +1,12 @@
+{
+  "_comment": "HBO primitive type-code -> byte size, per format. Code numbering/sizing is format-specific (note code 9 differs: inline=8, registry=4). Add a new code here when a new Painter version introduces one (e.g. via 'automap.py --register-primitive CODE=SIZE'). The inline table is read by hbo_decode.py; the registry table is read by hbo_reserializer.py (its explicit per-code branches still take precedence where present).",
+  "inline": {
+    "1": 4, "2": 8, "3": 12, "4": 16, "5": 4, "6": 8, "7": 12, "8": 16,
+    "9": 8, "10": 1, "11": 4, "12": 8, "13": 36, "14": 64, "15": 8, "16": 32, "21": 8
+  },
+  "registry": {
+    "1": 4, "2": 8, "3": 12, "4": 16, "5": 4, "6": 8, "7": 12, "8": 16,
+    "9": 4, "10": 1, "11": 4, "12": 8, "13": 36, "14": 64, "15": 8, "16": 32, "21": 8,
+    "22": 16
+  }
+}

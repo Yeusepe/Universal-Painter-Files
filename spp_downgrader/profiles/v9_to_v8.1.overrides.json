@@ -1,0 +1,15 @@
+{
+  "_comment": "Dict types present in v9 but absent from v8.1, confirmed by compatibility testing. v8.1 rejects unknown types ('Invalid dict type ...'), so drop them on the v9->v8.1 step. RULE: drop each type at the boundary where its feature DISAPPEARS. DataSourceVectorial vanishes at v10->v9 (lives in v10_to_v9.overrides), NOT here -- otherwise a v9 target leaks it.",
+  "blacklist": ["BakingTemplate", "BakingDefinitionTemplate", "DataEmitterStroke3D"],
+
+  "_comment_schema_add": "Stroke-action types the v8.1 sample corpus never used (no sample uses the smudge/clone tools), so they are missing from the generated v8.1 schema. Their member set is the v8.1 stroke-action FAMILY base, taken from genuine v8.1 DataActionPaint/DataActionEraser (samples DO contain those): Paint minus sourceColor, Eraser minus eraseMode. Adding them here lets the projection synthesize the members v8.1 requires that a v12.1 source dropped (projDuplicates, stencilPostBlending) and drop the ones it added (changeFlags, strokes3D). defaults_add carries the genuine v8.1 values for the synthesized members.",
+  "schema_add": {
+    "DataActionSmudge": ["brush", "channelTypes", "enabled", "opacity", "projDuplicates", "projMatrix", "projSamplingWrap", "selection", "sourceStencil", "sourceTransparent", "stampBlendingMode", "stencilPostBlending", "strokes", "tags", "uid"]
+  },
+  "defaults_add": {
+    "DataActionSmudge": {
+      "projDuplicates": ["p", 10, "ff"],
+      "stencilPostBlending": ["p", 10, "ff"]
+    }
+  }
+}

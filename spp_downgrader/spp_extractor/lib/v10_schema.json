@@ -1,0 +1,746 @@
+{
+ "BakingMaterials": [
+  "materialTemplate",
+  "materials",
+  "tweakLists",
+  "uid",
+  "visualizationData"
+ ],
+ "BakingMaterial": [
+  "definitions",
+  "enabled",
+  "excludedUvTiles",
+  "isUsed",
+  "materialParameters",
+  "materialUID",
+  "uid"
+ ],
+ "BakingDefinition": [
+  "enabled",
+  "parameters",
+  "uid",
+  "usage"
+ ],
+ "BakingCommonParameters": [
+  "commonParameters",
+  "detailParameters",
+  "uid"
+ ],
+ "BakingTweakList": [
+  "bakerId",
+  "tweaks",
+  "uid"
+ ],
+ "DataTweakInt2": [
+  "identifier",
+  "uid",
+  "value"
+ ],
+ "DataTweakInt": [
+  "identifier",
+  "uid",
+  "value"
+ ],
+ "DataTweakBool": [
+  "identifier",
+  "uid",
+  "value"
+ ],
+ "DataTweakByteArray": [
+  "identifier",
+  "uid",
+  "value"
+ ],
+ "DataTweakFloat": [
+  "identifier",
+  "uid",
+  "value"
+ ],
+ "BakingVisualizationData": [
+  "cageColor",
+  "cageWireframeColor",
+  "displayCage",
+  "displayCageWireframe",
+  "displayHighPoly",
+  "displayHighPolyError",
+  "displaySeamsError",
+  "hideBakingMeshes",
+  "highPolyColor",
+  "highPolyErrorColor",
+  "neutralMaterial",
+  "onlyActiveMaterials",
+  "seamsErrorColor",
+  "uid"
+ ],
+ "BakingNeutralMaterialData": [
+  "aoIntensity",
+  "baseColor",
+  "bentNormalDiffuseAmount",
+  "bentNormalSpecularAmount",
+  "enabled",
+  "metallic",
+  "roughness",
+  "specularQuality",
+  "uid",
+  "useBentNormal"
+ ],
+ "CameraSettingsData": [
+  "defaultCamera",
+  "sceneCameras",
+  "selectedCamera",
+  "uid"
+ ],
+ "CameraTransformationData": [
+  "aperture",
+  "features",
+  "filmSize",
+  "focalLength",
+  "focusDistance",
+  "label",
+  "orthographicHeight",
+  "position",
+  "rotation",
+  "type",
+  "uid"
+ ],
+ "DataColorProfileParameters": [
+  "enable",
+  "lutURL",
+  "uid",
+  "whitePoint"
+ ],
+ "IraySettingsData": [
+  "causticSamplerEnabled",
+  "customResolution",
+  "environment",
+  "fireflyFilterEnabled",
+  "maxSamples",
+  "maxSeconds",
+  "mdls",
+  "minSamples",
+  "uid",
+  "useCustomResolution"
+ ],
+ "IrayEnvironmentData": [
+  "clearColor",
+  "domeType",
+  "ground",
+  "objectScale",
+  "position",
+  "radius",
+  "rotationAxis",
+  "textureScale",
+  "uid",
+  "useClearColor",
+  "visualize"
+ ],
+ "IrayGroundData": [
+  "enable",
+  "glossiness",
+  "legacyReflection",
+  "position",
+  "reflectivity",
+  "shadowIntensity",
+  "uid",
+  "visibleFromBelow"
+ ],
+ "MdlData": [
+  "dispTess",
+  "mdlPath",
+  "tweaks",
+  "uid"
+ ],
+ "DisplacementTessellationData": [
+  "enable",
+  "max_length",
+  "scale",
+  "source_channel",
+  "subdiv_count",
+  "subdiv_mode",
+  "uid"
+ ],
+ "DataTweakFloat3": [
+  "identifier",
+  "uid",
+  "value"
+ ],
+ "DataStackStates": [
+  "states",
+  "uid"
+ ],
+ "DataStackState": [
+  "editionTargetUid",
+  "layersState",
+  "stackUid",
+  "uid"
+ ],
+ "DataLayerState": [
+  "layerUid",
+  "maskSelected"
+ ],
+ "DataPostEffectsParameters": [
+  "colorCorrection",
+  "customToneMappingParameters",
+  "dofParameters",
+  "enable",
+  "glareParameters",
+  "lensDistortion",
+  "subsurfaceScatteringParameters",
+  "temporalAntialiasParameters",
+  "toneMapParameters",
+  "uid",
+  "vignette"
+ ],
+ "DataColorCorrectionParameters": [
+  "bias",
+  "brightness",
+  "contrast",
+  "enable",
+  "grayscale",
+  "negative",
+  "saturation",
+  "sepiaToneRatio",
+  "temperatureInKelvins",
+  "temperatureLuminance",
+  "uid",
+  "whiteBalanceInKelvins",
+  "whiteBalanceLuminance"
+ ],
+ "DataCustomToneMappingParameters": [
+  "function",
+  "uid"
+ ],
+ "DataDOFParameters": [
+  "enable",
+  "uid"
+ ],
+ "DataGlareParameters": [
+  "enable",
+  "luminance",
+  "remapFactor",
+  "shape",
+  "threshold",
+  "uid"
+ ],
+ "DataLensDistortionParameters": [
+  "edgeRoundness",
+  "edgeSmoothness",
+  "enable",
+  "fovInDeg",
+  "power",
+  "uid"
+ ],
+ "DataSubsurfaceScatteringParameters": [
+  "enable",
+  "nbSamples",
+  "uid"
+ ],
+ "DataTemporalAntialiasParameters": [
+  "enable",
+  "nbFrames",
+  "uid"
+ ],
+ "DataToneMappingParameters": [
+  "ditherOffsetScale",
+  "ditherOffsetScaleAuto",
+  "enable",
+  "exposure",
+  "functionIndex",
+  "gamma",
+  "mappingFactor",
+  "uid"
+ ],
+ "DataVignetteParameters": [
+  "enable",
+  "fovDependence",
+  "strength",
+  "uid"
+ ],
+ "ViewerSettingsData": [
+  "additionalMapSettings",
+  "cameraFrameSettings",
+  "currentMode",
+  "gridSettings",
+  "materialSettings",
+  "samplingSettings",
+  "soloSettings",
+  "symmetrySettings",
+  "toolPreview",
+  "uid"
+ ],
+ "SettingsAdditionalMap": [
+  "meshMapUsage",
+  "resourceImageUrl",
+  "uid"
+ ],
+ "SettingsCameraFrame": [
+  "cameraFrameOpacity",
+  "enableCameraFrame",
+  "uid"
+ ],
+ "SettingsGrid": [
+  "enableGrid",
+  "gridAxis",
+  "gridColor",
+  "gridOpacity",
+  "uid"
+ ],
+ "SettingsMaterial": [
+  "cubemapBlur",
+  "cubemapColorspace",
+  "cubemapOpacity",
+  "cubemapRotation",
+  "cubemapSpace",
+  "cubemapUrl",
+  "exposure",
+  "overrideCubemapColorspace",
+  "shaders",
+  "shadowmode",
+  "shadowopacity",
+  "shadows",
+  "uid"
+ ],
+ "ShaderData": [
+  "dispTess",
+  "name",
+  "shaderUrl",
+  "tweaks",
+  "uid"
+ ],
+ "SettingsSampling": [
+  "anisotropy",
+  "lodBias",
+  "uid"
+ ],
+ "SettingsSolo": [
+  "channelType",
+  "componentsSelection",
+  "enableColors",
+  "enableScale",
+  "negativeColor",
+  "positiveColor",
+  "scale",
+  "uid",
+  "unlit"
+ ],
+ "SettingsSymmetry": [
+  "color",
+  "mirrorAxis",
+  "mirrorOffsets",
+  "radialAngleSpan",
+  "radialAxis",
+  "radialDuplicationCount",
+  "radialPoint",
+  "type",
+  "uid"
+ ],
+ "SettingsToolPreview": [
+  "enableWireframe",
+  "hideStencilWhenPainting",
+  "particleOpacity",
+  "particleSizeCoef",
+  "stencilOpacity",
+  "uid",
+  "wireframeColor",
+  "wireframeOpacity"
+ ],
+ "DataMaterial": [
+  "additionalAmbientOcclusionMapBlending",
+  "additionalMaps",
+  "additionalNormalMapBlending",
+  "description",
+  "height2NormalMethod",
+  "normalMapBitmap",
+  "paddingMode",
+  "resolutionLog2",
+  "sceneMaterialName",
+  "sceneMaterialUID",
+  "shaderId",
+  "stacks",
+  "uid",
+  "useUVTiles",
+  "uvTiles"
+ ],
+ "DataBitmap": [
+  "alphaType",
+  "colorSpaceOverride",
+  "uid",
+  "urlToBitmapRes"
+ ],
+ "DataColorSpaceOverride": [
+  "main",
+  "workflowACE",
+  "workflowLegacy",
+  "workflowOCIO"
+ ],
+ "DataMaterialStack": [
+  "channels",
+  "label",
+  "selections",
+  "stack",
+  "uid"
+ ],
+ "DataChannel": [
+  "format",
+  "type",
+  "uid",
+  "userIsColorManaged",
+  "userName"
+ ],
+ "DataStackLayers": [
+  "items",
+  "uid"
+ ],
+ "DataLayerColor": [
+  "actions",
+  "colorTag",
+  "enabled",
+  "enabledGeometryMask",
+  "enabledMeshDefault",
+  "enabledMeshList",
+  "enabledUVTileDefault",
+  "enabledUVTileList",
+  "explicitPersistentCachePin",
+  "gammaCompensation",
+  "geometryMaskType",
+  "label",
+  "maskActions",
+  "maskEnabled",
+  "maskInitial",
+  "perChannelBlending",
+  "uid"
+ ],
+ "DataStackActions": [
+  "items",
+  "uid"
+ ],
+ "DataActionGroup": [
+  "channelTypes",
+  "enabled",
+  "label",
+  "perChannelBlending",
+  "selection",
+  "subStack",
+  "tags",
+  "uid"
+ ],
+ "DataBlending": [
+  "blendingMode",
+  "channelTypes",
+  "opacity"
+ ],
+ "DataDocument": [
+  "colorManagementACE",
+  "colorManagementOCIO",
+  "colorManagementWorkflow",
+  "materials",
+  "meshSystemSizeOverride",
+  "normalMapSyscoord",
+  "projectWorkflow",
+  "tangentSpaceMode",
+  "uid",
+  "usePhysicalSizeAsDefault"
+ ],
+ "DataLayerGroup": [
+  "GUIcollapsedState",
+  "actions",
+  "colorTag",
+  "enabled",
+  "enabledGeometryMask",
+  "enabledMeshDefault",
+  "enabledMeshList",
+  "enabledUVTileDefault",
+  "enabledUVTileList",
+  "explicitPersistentCachePin",
+  "gammaCompensation",
+  "geometryMaskType",
+  "label",
+  "maskActions",
+  "maskEnabled",
+  "maskInitial",
+  "perChannelBlending",
+  "subStack",
+  "uid"
+ ],
+ "DataActionFill": [
+  "backfaceCulling",
+  "backfaceCullingAngle",
+  "backfaceCullingHardness",
+  "channelTypes",
+  "cylinderCullingAngle",
+  "cylinderHideCaps",
+  "dddEulerAngles",
+  "dddGrid",
+  "dddPosition",
+  "dddSize",
+  "dddWrap",
+  "depthCulling",
+  "depthCullingHardness",
+  "enabled",
+  "filtering",
+  "label",
+  "perChannelBlending",
+  "projection",
+  "selection",
+  "sideHardness",
+  "sources",
+  "tags",
+  "uid",
+  "uvGrid",
+  "uvSamplingWrap",
+  "uvTransferChannel",
+  "uvTransformation"
+ ],
+ "DataGridDeformation": [
+  "depth",
+  "gridSize",
+  "uid",
+  "vertices"
+ ],
+ "DataGridVertex": [
+  "position3D",
+  "positionUV",
+  "tangentColumnNext",
+  "tangentColumnPrev",
+  "tangentRowNext",
+  "tangentRowPrev"
+ ],
+ "DataSourceUniform": [
+  "channelTypes",
+  "color",
+  "opacity",
+  "uid"
+ ],
+ "Data2DTransformation": [
+  "GUIPivot",
+  "GUIScaleRatioLocked",
+  "physicalSizeBoundedByScaleFactors",
+  "rotation",
+  "scaleFactors",
+  "scaleMode",
+  "scalePhysicalSize",
+  "translation"
+ ],
+ "DataSourceProcedural": [
+  "channelTypes",
+  "mode",
+  "opacity",
+  "procedural",
+  "randomDrawsCountLog2",
+  "randomDrawsSeed",
+  "stampCycleCount",
+  "strokeWires",
+  "uid"
+ ],
+ "DataProcedural": [
+  "monoChannelOutputIndex",
+  "outputIdentifierAlpha",
+  "outputs",
+  "sourcesInputs",
+  "tweaks",
+  "uid",
+  "urlToSbsRes"
+ ],
+ "DataProceduralOutput": [
+  "channelTypes",
+  "identifier",
+  "identifierAlpha",
+  "main",
+  "workflowACE",
+  "workflowLegacy",
+  "workflowOCIO"
+ ],
+ "DataProceduralInputsSource": [
+  "input",
+  "inputColorProfile",
+  "source",
+  "uid"
+ ],
+ "DataProceduralInput": [
+  "channelType",
+  "identifier",
+  "identifierAlpha",
+  "main",
+  "workflowACE",
+  "workflowLegacy",
+  "workflowOCIO"
+ ],
+ "DataSourceBitmap": [
+  "bitmap",
+  "channelTypes",
+  "opacity",
+  "uid"
+ ],
+ "DataActionFilterLevels": [
+  "channelTypes",
+  "enabled",
+  "label",
+  "levels",
+  "selection",
+  "tags",
+  "uid"
+ ],
+ "DataLevels": [
+  "clamp",
+  "gamma",
+  "inputMaximum",
+  "inputMinimum",
+  "outputMaximum",
+  "outputMinimum",
+  "uid"
+ ],
+ "states": [],
+ "DataActionPaint": [
+  "brush",
+  "changeFlags",
+  "channelTypes",
+  "enabled",
+  "opacity",
+  "projMatrix",
+  "projSamplingWrap",
+  "selection",
+  "sourceColor",
+  "sourceStencil",
+  "sourceTransparent",
+  "stampBlendingMode",
+  "strokes",
+  "strokes3D",
+  "tags",
+  "uid"
+ ],
+ "DataBrush": [
+  "alignment",
+  "brushSize",
+  "brushSizeJitter",
+  "brushSizeSpace",
+  "cullingAngle",
+  "cullingEnabled",
+  "filtering",
+  "flow",
+  "flowJitter",
+  "paintThrough",
+  "stampsEmitter",
+  "uid"
+ ],
+ "DataEmitterStroke": [
+  "followPath",
+  "positionJitter",
+  "positionJitterBothAxes",
+  "positionJitterDistribution",
+  "pressureFlowEnabled",
+  "pressureFlowMinimum",
+  "pressureSizeEnabled",
+  "pressureSizeMinimum",
+  "rotation",
+  "rotationJitter",
+  "spacing",
+  "uid"
+ ],
+ "DataStroke": [
+  "cloneTranslation",
+  "duplicateCount",
+  "duplicateMatrix",
+  "label",
+  "lazyDistance",
+  "points",
+  "pressure",
+  "projectionMatrix",
+  "randomSeed",
+  "tilt",
+  "uid",
+  "viewMatrix",
+  "viewType"
+ ],
+ "DataStrokeKey": [
+  "position",
+  "time",
+  "type"
+ ],
+ "BakingDefinitionTemplate": [
+  "enabled",
+  "parameters",
+  "uid",
+  "usage"
+ ],
+ "BakingTemplate": [
+  "commonParameters",
+  "definitions",
+  "detailParameters",
+  "uid"
+ ],
+ "DataActionEraser": [
+  "brush",
+  "changeFlags",
+  "channelTypes",
+  "enabled",
+  "eraseMode",
+  "opacity",
+  "projMatrix",
+  "projSamplingWrap",
+  "selection",
+  "sourceStencil",
+  "sourceTransparent",
+  "stampBlendingMode",
+  "strokes",
+  "strokes3D",
+  "tags",
+  "uid"
+ ],
+ "DataAdditionalMap": [
+  "urlToBitmapRes",
+  "usage"
+ ],
+ "DataActionFilterProcedural": [
+  "channelTypes",
+  "enabled",
+  "inputMask",
+  "inputs",
+  "label",
+  "perChannelBlending",
+  "procedural",
+  "selection",
+  "tags",
+  "uid"
+ ],
+ "DataActionDecal": [
+  "channelTypes",
+  "enabled",
+  "hits",
+  "selection",
+  "tags",
+  "uid"
+ ],
+ "DataDecalHitPunctual": [
+  "color",
+  "duplicateCount",
+  "duplicateMatrix",
+  "granularity",
+  "paintThrough",
+  "position",
+  "projViewInvMatrix",
+  "uid",
+  "viewType"
+ ],
+ "DataExportChannel": [
+  "channelSrc",
+  "mapId",
+  "mapIdType"
+ ],
+ "DataExportMap": [
+  "bitdepth",
+  "channels",
+  "dithering",
+  "fileformat",
+  "path",
+  "uid"
+ ],
+ "DataExportPreset": [
+  "maps",
+  "uid"
+ ],
+ "DataTweakFloat2": [
+  "identifier",
+  "uid",
+  "value"
+ ]
+}

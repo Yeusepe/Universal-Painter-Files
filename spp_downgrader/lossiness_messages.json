@@ -1,0 +1,26 @@
+{
+  "_comment": "Maps downgrade transforms to plain-English, client-facing loss statements. Only GENUINELY lossy categories are listed (dropped data + width-shrinks). Renames, object<->array re-kinds, and enum<->bitmask value transforms are faithful and are NOT reported. Match order per category: exact key -> first matching glob pattern -> generic fallback (which humanizes the type/field name). Edit freely; uncurated keys still produce readable prose via 'generic'.",
+
+  "blacklist": {
+    "exact": {
+      "DataSymmetry": "Newer symmetry settings will be reset to defaults.",
+      "SettingsSymmetry.enabled": "Newer symmetry settings will be reset to defaults.",
+      "scale_unit": "The document scale / unit setting will be reset.",
+      "sssScatteringUsesTranslucency": "The subsurface-scattering 'use translucency' option will be reset."
+    },
+    "patterns": [
+      { "match": "*ParametersV2", "message": "Newer post-processing effects (bloom, depth of field, color correction & grading, glare, lens flare, vignette, sharpen, tone mapping, film grain, chromatic aberration) will be reset to the older version's defaults." },
+      { "match": "Baking*", "message": "Mesh-map baking setup introduced in newer versions will be removed — you may need to re-bake on the older version." },
+      { "match": "DataTweak*", "message": "Some material / effect parameters that use data types added in newer versions will be dropped." }
+    ],
+    "generic": "\"{human}\" (added in a newer version) is not supported in the target version and will be removed."
+  },
+
+  "field_retype": {
+    "patterns": [
+      { "match": "*.channelType", "message": "Projects using more than 64 channels will lose any channels beyond the first 64." },
+      { "match": "*.channelTypes", "message": "Projects using more than 64 channels will lose any channels beyond the first 64." }
+    ],
+    "generic": "Some \"{human}\" values may lose precision in the target version."
+  }
+}

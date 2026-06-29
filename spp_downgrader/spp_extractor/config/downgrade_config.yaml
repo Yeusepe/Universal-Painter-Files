@@ -1,0 +1,32 @@
+dict_removal:
+  enabled: true
+  strategy: blacklist
+  blacklist:
+  - BakingCommonParameters
+  - bloomParametersV2
+  - colorCorrectionParametersV2
+  - colorGradingParametersV2
+  - dofParametersV2
+  - filmGrainParametersV2
+  - glareParametersV2
+  - lateralAberrationParametersV2
+  - lensFlareParametersV2
+  - sharpenParametersV2
+  - toneMappingParametersV2
+  - vignetteParametersV2
+  - scale_unit
+  - sssScatteringUsesTranslucency
+  - SettingsSymmetry.enabled
+  whitelist: null
+  regex_patterns: null
+  combined:
+    mode: OR
+    strategies: null
+  dataset_rules: null
+safety:
+  create_backup: true
+  backup_suffix: .backup
+  dry_run: false
+target_version:
+  max_data_version: 81
+

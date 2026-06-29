@@ -1,0 +1,4 @@
+{
+  "_comment": "DataSourceVectorial (SVG vector source) is supported in v10/v11/v12 but ABSENT in v9 and v8.1, confirmed by compatibility testing. The feature disappears at the v10->v9 boundary, so it is dropped HERE. Composition unions this into ANY chain ending at v9 or below (v9, v8.1), so both targets handle it. The engine's CASCADE_DROP rules (hbo_reserializer) then drop the now-source-less substance inputs / SVG fill layers so nothing dangles.",
+  "blacklist": ["DataSourceVectorial"]
+}

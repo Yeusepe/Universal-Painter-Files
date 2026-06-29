@@ -1,0 +1,35 @@
+{
+  "from": "9",
+  "to": "8.1",
+  "_comment": "AUTO-MAPPED from v9.0.0.spp vs v8.1.0.spp. Review TODO entries; edit freely (this file is the source of truth).",
+  "source_format": "inline",
+  "target_format": "inline",
+  "target_max_data_version": 70,
+  "data_version_map": {
+    "baking/baking.ini": 14,
+    "editor/camera.ini": 2,
+    "editor/colorprofile.ini": 0,
+    "editor/iraysettings.ini": 1,
+    "editor/layersstackstate.bin": 2,
+    "editor/posteffects.ini": 7,
+    "editor/viewersettings.ini": 24,
+    "paint/default_material.bin": 70,
+    "paint/document.bin": 70
+  },
+  "dataset_renames": {},
+  "blacklist": [
+    "BakingCommonParameters",
+    "BakingDefinition",
+    "BakingMaterial",
+    "BakingNeutralMaterialData",
+    "BakingTweakList",
+    "BakingVisualizationData"
+  ],
+  "type_rename": {},
+  "field_rename": {},
+  "field_retype": {},
+  "baking_tweak_rename": {},
+  "baking_baker_id_rename": {},
+  "schema_file": "v8.1_schema.json",
+  "defaults_file": "v8.1_defaults.json"
+}

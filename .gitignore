@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# PyInstaller build output
+spp_downgrader/build/
+spp_downgrader/build_pyi/
+spp_downgrader/dist/
+*.manifest
+
+# Built converter — distributed via GitHub Releases, never committed
+universal_spp_plugin/bin/uspp_tool.exe
+
+# Editor / OS
+.vscode/
+.idea/
+.ruff_cache/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,73 @@
+{
+  "from": 11,
+  "to": 10,
+  "_comment": "Single source of truth for what differs between v11 and v10. Edit this, not the Python. Binary codecs (source_format parser / target_format writer) live in code; everything below is data. Generate a skeleton for a new step with: python debug/build_profile.py <new_vN.spp> <native_vN-1.spp>",
+
+  "source_format": "registry",
+  "target_format": "inline",
+
+  "target_max_data_version": 81,
+
+  "data_version_map": {
+    "baking/baking.ini": 20,
+    "editor/camera.ini": 2,
+    "editor/colorprofile.ini": 0,
+    "editor/iraysettings.ini": 1,
+    "editor/layersstackstate.bin": 2,
+    "editor/posteffects.ini": 7,
+    "editor/viewersettings.ini": 26,
+    "paint/default_material.bin": 81,
+    "paint/document.bin": 81
+  },
+
+  "dataset_renames": {
+    "editor/iraysettings2.ini": "editor/iraysettings.ini",
+    "editor/layersstackstate2.bin": "editor/layersstackstate.bin",
+    "editor/viewersettings2.ini": "editor/viewersettings.ini"
+  },
+
+  "blacklist": [
+    "BakingCommonParameters",
+    "bloomParametersV2",
+    "colorCorrectionParametersV2",
+    "colorGradingParametersV2",
+    "dofParametersV2",
+    "filmGrainParametersV2",
+    "glareParametersV2",
+    "lateralAberrationParametersV2",
+    "lensFlareParametersV2",
+    "sharpenParametersV2",
+    "toneMappingParametersV2",
+    "vignetteParametersV2",
+    "scale_unit",
+    "sssScatteringUsesTranslucency",
+    "SettingsSymmetry.enabled"
+  ],
+
+  "type_rename": {
+    "DataBrushStamp": "DataBrush"
+  },
+
+  "baking_tweak_rename": {
+    "Detail.CageMode": "Detail.UseCage",
+    "Detail.SecondaryCommon.SamplingRadius": "Detail.Curvature1.SamplingRadius"
+  },
+
+  "baking_baker_id_rename": {
+    "Normal": "GLMapBakerManager.NormalFromDetail",
+    "NormalWS": "GLMapBakerManager.NormalWS",
+    "Color": "GLMapBakerManager.ColorFromDetail",
+    "AmbientOcclusion": "GLMapBakerManager.AOFromDetail",
+    "Curvature": "GLMapBakerManager.Curvature1FromDetail",
+    "Position": "GLMapBakerManager.Position",
+    "Thickness": "GLMapBakerManager.ThicknessFromDetail",
+    "Height": "GLMapBakerManager.HeightFromDetail",
+    "BentNormals": "GLMapBakerManager.BentNormalsFromDetail",
+    "Opacity": "GLMapBakerManager.MaskFromDetail",
+    "CurvatureFromMap": "GLMapBakerManager.Curvature"
+  },
+
+  "schema_file": "v10_schema.json",
+  "baking_schema_file": "v10_baking_schema.json",
+  "defaults_file": "v10_defaults.json"
+}
