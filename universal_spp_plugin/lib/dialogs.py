@@ -20,7 +20,7 @@ def _parent():
 
 def open_uspp():
     QtWidgets = _qt()
-    path, _ = QtWidgets.QFileDialog.getOpenFileName(_parent(), "Open Universal Project", "", "Universal SPP (*.uspp)")
+    path, _ = QtWidgets.QFileDialog.getOpenFileName(_parent(), "Open Universal Project", "", "Painter projects (*.uspp *.spp)")
     return path or None
 
 

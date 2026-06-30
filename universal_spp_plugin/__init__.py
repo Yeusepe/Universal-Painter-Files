@@ -70,6 +70,11 @@ def _temp_spp():
     return os.path.join(_CACHE, f"uspp_{int(time.time())}.spp")
 
 
+def _temp_uspp():
+    os.makedirs(_CACHE, exist_ok=True)
+    return os.path.join(_CACHE, f"uspp_{int(time.time())}.uspp")
+
+
 # ------------------------------------------------------- double-click (launch argument)
 
 def _launch_uspp_arg():
@@ -123,13 +128,20 @@ def on_open():
         _open_path(uspp)
 
 
-def _open_path(uspp):
-    """Convert `uspp` to the running Painter version and open it. Shared by the menu and the
-    double-click launch-argument handler."""
+def _open_path(src):
     try:
         if not runner.available():
             dialogs.error("Converter not found.\nExpected bin/uspp_tool.exe beside the plugin.")
             return
+        if src.lower().endswith(".spp"):
+            uspp = _temp_uspp()
+            argv, env = runner.pack_args(src, uspp)
+            ok, err = progress.run_with_progress(_parent(), "Reading project", argv, env)
+            if not ok:
+                dialogs.error(f"Could not read the project.\n{err}")
+                return
+        else:
+            uspp = src
         target = version.detect_running()
         if not target:
             dialogs.error("Could not detect the running Painter version.")

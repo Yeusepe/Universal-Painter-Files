@@ -102,6 +102,8 @@ def resolve_direction(s_label, t_label):
     edges = _edges()
     snapped = mp._snap_target(t_label, edges)   # 8.3 -> 8.1: minors share the format, forward-compat covers the gap
     path = mp._find_path(edges, s_label, snapped)
+    if path is None and sk[0] == tk[0]:
+        return "downgrade", mp._major_baseline_profile(sk[0]) is not None
     return "downgrade", path is not None
 
 

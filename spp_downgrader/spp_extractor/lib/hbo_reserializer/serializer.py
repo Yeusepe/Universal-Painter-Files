@@ -88,11 +88,17 @@ class HBOSerializer(HelperMixin, ReaderMixin, InlineWriterMixin, RegistryWriterM
     # source-less and the engine derefs null while linking. So drop the whole CONTAINING
     # object from its parent array instead. Extend this set if other "X dangles when its
     # required source Y is removed" cases surface.
-    CASCADE_DROP_PARENT_FIELDS = {"DataProceduralInputsSource.source"}
+    CASCADE_DROP_PARENT_FIELDS = {"DataProceduralInputsSource.source",
+                                  "DataActionGroup.subStack",
+                                  "BakingDefinitionTemplate.parameters"}
     # Array fields that MUST be non-empty: if every element is blacklisted away (e.g. a
     # fill layer whose only source is an unsupported SVG vector source), the object is
     # meaningless and the engine indexes into the empty list -> null. Drop the parent.
-    CASCADE_DROP_IF_EMPTY_ARRAY = {"DataActionFill.sources"}
+    CASCADE_DROP_IF_EMPTY_ARRAY = {"DataActionFill.sources",
+                                   "DataActionPaint.strokes3D",
+                                   "DataActionEraser.strokes3D",
+                                   "DataActionSmudge.strokes3D",
+                                   "DataStackActions.items"}
 
     def __init__(self, data):
         self.data = data

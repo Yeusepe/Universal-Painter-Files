@@ -1,3 +1,6 @@
+> [!NOTE]
+> This is still being tested. If you have a Painter file that does not seem to be working, join our Discord: https://discord.gg/2cEmTJf7Jb
+
 ![Universal SPP](https://github.com/user-attachments/assets/bb142dec-652b-4973-943e-3b731e8f1225)
 ---
 Universal SPP is an unofficial compatibility tool for `.spp` project files made

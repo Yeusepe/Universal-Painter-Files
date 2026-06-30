@@ -247,6 +247,66 @@ def _discover_edges(profile_dir):
     return edges
 
 
+def _major_baseline_profile(major, profile_dir=None):
+    profile_dir = profile_dir or os.environ.get("SPP_PROFILE_DIR", _DEFAULT_PROFILE_DIR)
+    edges = _discover_edges(profile_dir)
+    target = str(major)
+    sources = sorted((frm for frm, tos in edges.items() if target in tos), key=_vkey)
+    if not sources:
+        return None
+    prof = _load_path(edges[sources[0]][target])
+    supported = _target_sample_types()
+    if supported:
+        kept = [t for t in prof.data.get("blacklist", []) if t not in supported]
+        if kept != prof.data.get("blacklist", []):
+            prof.data = dict(prof.data, blacklist=kept)
+    return prof
+
+
+_SAMPLE_TYPES_CACHE = {}
+
+
+def _target_sample_types():
+    exe = os.environ.get("SPP_TARGET_BINARY")
+    if not exe:
+        return frozenset()
+    if exe in _SAMPLE_TYPES_CACHE:
+        return _SAMPLE_TYPES_CACHE[exe]
+    found = set()
+    try:
+        import glob as _glob, struct as _struct
+        import h5py
+        from lib.hbo_reserializer.serializer import HBOSerializer
+        samples = os.path.join(os.path.dirname(exe), "resources", "samples")
+        for path in _glob.glob(os.path.join(samples, "*.spp")):
+            try:
+                f = h5py.File(path, "r")
+            except Exception:
+                continue
+            def _visit(_n, o):
+                if not isinstance(o, h5py.Dataset):
+                    return
+                try:
+                    raw = bytes(o[()])
+                except Exception:
+                    return
+                if len(raw) < 12 or _struct.unpack("<III", raw[:12])[1] != 1:
+                    return
+                try:
+                    for d in HBOSerializer(raw).registry_defs:
+                        if d.get("name"):
+                            found.add(d["name"])
+                except Exception:
+                    pass
+            f.visititems(_visit)
+            f.close()
+    except Exception:
+        found = set()
+    result = frozenset(found)
+    _SAMPLE_TYPES_CACHE[exe] = result
+    return result
+
+
 def _find_path(edges, frm, to):
     """BFS the adjacent-step graph for a downgrade chain frm -> ... -> to.
     Returns the ordered list of step file paths, or None."""
@@ -284,9 +344,13 @@ def load(name=None):
         return _load_one(name, profile_dir)         # not a pair name -> let open() error
     frm, to = m.group(1), m.group(2)
     edges = _discover_edges(profile_dir)
-    to = _snap_target(to, edges)                    # 8.3 -> 8.1, 9.5 -> 9, ... (forward-compat covers the rest)
-    path = _find_path(edges, frm, to)
+    snapped = _snap_target(to, edges)
+    path = _find_path(edges, frm, snapped)
     if not path:
+        if _vkey(frm)[0] == _vkey(to)[0] and _vkey(frm) > _vkey(to):
+            baseline = _major_baseline_profile(_vkey(to)[0], profile_dir)
+            if baseline is not None:
+                return baseline
         return _load_one(name, profile_dir)         # no chain -> clear error
     chain = [_load_path(p) for p in path]
     return chain[0] if len(chain) == 1 else _compose(chain)

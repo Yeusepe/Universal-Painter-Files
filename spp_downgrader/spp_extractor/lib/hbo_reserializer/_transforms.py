@@ -265,6 +265,13 @@ class TransformMixin:
                             _u = _cv[1].decode("utf-8", "replace").lower()
                             if any(g in _u for g in runtime.DROP_SUBSTANCE_GRAPHS):
                                 return None  # cascade: drops the source, empties/drops its fill
+        if obj_name == "BakingTweakList" and runtime.TARGET_MEMBERS:
+            for _n, _t, _v in fields:
+                if _n == "bakerId" and _v[0] == "string":
+                    bid = _v[1].decode("utf-8", "replace")
+                    if any(tok not in runtime.TARGET_MEMBERS for tok in bid.split(".")):
+                        return None
+                    break
         new_fields = None
         for i, (name, tcode, value) in enumerate(fields):
             f = fields[i]
