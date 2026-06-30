@@ -79,7 +79,7 @@ class SPPBuilder:
         self._downgrade_config = None
         # Fast mode: minimal output compression for throwaway temp files (plugin "Open").
         self.fast = bool(os.environ.get("SPP_FAST"))
-        # Profile data overrides the class-attr defaults (single source of truth).
+        # Apply migration profile overrides for dataset renames and data versions.
         self.V10_DATASET_RENAMES = PROFILE.dataset_renames or self.V10_DATASET_RENAMES
         self.V10_DATA_VERSION_MAP = PROFILE.data_version_map or self.V10_DATA_VERSION_MAP
 
@@ -89,7 +89,7 @@ class SPPBuilder:
 
     # Max SBAM (cooked substance assembly) format each target's substance engine reads.
     # v8.1 ships engine 8.5.2 which reads format <=6; v9+ engines read >=9. Only v8.1
-    # needs graphs dropped/swapped. (Verified against each install's shipped .sbsar.)
+    # needs graphs dropped/swapped.
     SUBSTANCE_MAX_FORMAT = {8: 6}
 
     def _compute_drop_substance_graphs(self, zf):
@@ -185,9 +185,8 @@ class SPPBuilder:
                 # Drop substance graphs whose cooked format the target engine can't read.
                 self._compute_drop_substance_graphs(zf)
 
-                # Load the target version's known-identifier set so members a NEWER version
-                # added (which the older target's reader rejects) are dropped systematically,
-                # instead of hand-listing them per type.
+                # Load the target version's member allowlist and drop identifiers its reader
+                # does not recognize.
                 from lib import hbo_reserializer as _hr
                 if self.target_major:
                     label = os.environ.get("SPP_TARGET_VERSION") or str(self.target_major)
@@ -487,8 +486,7 @@ class SPPBuilder:
         if data is None and raw_data is not None and _downgrade:
             if len(raw_data) >= 12 and struct.unpack('<I', raw_data[:4])[0] == BINARY_MAGIC:
                 _, version_check, data_version = struct.unpack('<III', raw_data[:12])
-                # version_check 1 = registry source (v11/v12); 0 = inline source
-                # (v8/v9/v10). Both route through the transform pipeline now.
+                # version_check 1 = registry source (v11/v12); 0 = inline source (v8/v9/v10).
                 if version_check in (0, 1):
                     try:
                         serializer = HBOSerializer(raw_data)
@@ -869,7 +867,7 @@ class SPPBuilder:
         return value_offset + 5
 
     def _get_downgrade_rules(self) -> Tuple[List[str], int]:
-        # Profile is authoritative; fall back to downgrade_config.yaml if absent.
+        # Prefer migration profile rules; use downgrade_config.yaml when no profile is loaded.
         if PROFILE.blacklist or PROFILE.target_max_data_version:
             return PROFILE.blacklist, (PROFILE.target_max_data_version or 81)
         if self._downgrade_config is None:
@@ -897,8 +895,7 @@ class SPPBuilder:
                                  max_data_version: Optional[int] = None) -> int:
         if max_data_version is None:
             _, max_data_version = self._get_downgrade_rules()
-        # The version map comes from the active profile's target; use it for any
-        # target (v10 inline or v11/v12 registry), not just <=10.
+        # Apply the profile's per-dataset data-version map (inline and registry targets).
         if self.V10_DATA_VERSION_MAP:
             mapped = self.V10_DATA_VERSION_MAP.get(dataset_path)
             if mapped is not None:
@@ -964,7 +961,7 @@ class SPPBuilder:
         for point in self._iter_points(strokes):
             if not isinstance(point, dict):
                 continue
-            # Match updater behavior: clear size/opacity and remove pressure.
+            # v10 stores stroke size/opacity on the layer, not per point.
             point['size'] = 0.0
             point['opacity'] = 0.0
             point.pop('pressure', None)
@@ -1003,15 +1000,7 @@ class SPPBuilder:
 
 
 def _m3_x64_128(data: bytes, seed: int = 0xF13A0239) -> tuple[int, int]:
-    """MurmurHash3 x64 128, matching Painter's m3_x64_128 attribute.
-
-    Painter's seed is 0xF13A0239 (verified: this reproduces the stored hash on
-    all 32 datasets of a native v10 .spp). The previous hand-rolled implementation
-    had both the wrong seed (0xF13CADB9) and a broken tail/finalization that only
-    matched short inputs (3/32) -- so every rebuilt file failed Painter's checksum
-    and reported "Archive appears to be corrupted". Use the mmh3 library (a project
-    dependency) instead of re-deriving the algorithm.
-    """
+    """Compute Painter's m3_x64_128 dataset checksum (MurmurHash3 x64 128, seed 0xF13A0239)."""
     import mmh3
     h0, h1 = mmh3.hash64(data, seed, x64arch=True, signed=False)
     return h0 & 0xFFFFFFFFFFFFFFFF, h1 & 0xFFFFFFFFFFFFFFFF
@@ -1030,10 +1019,8 @@ def build_spp(uspp_path: str, output_path: str, verbose: bool = False,
     Returns:
         True on success
     """
-    # Transcoding a large document.bin builds a tree of millions of small tuples/lists.
-    # Python's cyclic GC then rescans that ever-growing live set on every pass -> O(n^2)
-    # (a 63 MB document went from ~20 min to seconds). The tree is live data, not garbage,
-    # so collecting during the build is pure wasted work; disable it for the duration.
+    # Large document trees stay live for the whole build; disable GC so cyclic collection
+    # does not rescan them on every pass.
     import gc
     gc_was_enabled = gc.isenabled()
     gc.disable()

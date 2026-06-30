@@ -26,6 +26,12 @@ The plugin shows a loss report before a lossy downgrade is built.
 > documentation, sample project files, or license or activation bypasses. Use it
 > only with project files you own or have permission to process. Downgrades are
 > lossy and one-way. Always keep the original `.spp`.
+>
+> Universal SPP does not advocate, encourage, enable, or condone piracy of Adobe
+> products, Substance 3D Painter, or any other software. It is intended for
+> licensed users who already have legal access to their installed Painter
+> version, including Steam buyers whose purchase only provides a fixed version
+> and who need to use `.spp` files saved by collaborators in newer versions.
 
 ## What Is In This Repo
 
