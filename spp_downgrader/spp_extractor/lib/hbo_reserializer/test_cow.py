@@ -1,5 +1,6 @@
 """Self-check for identity-preserving transform passes."""
 import os, sys, struct
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from lib.hbo_reserializer import HBOSerializer, runtime
@@ -52,8 +53,25 @@ def test_project_identity_and_reorder():
     assert s._project_obj_to_v10_schema(untouched) is untouched
 
 
+def test_color_management_registry_gate():
+    s = _ser()
+    old_profile = runtime.PROFILE
+    try:
+        for target_format, expected in (
+            ("registry", ("object", ("ColorManagement", []))),
+            ("inline", ("object", ("", None))),
+        ):
+            runtime.PROFILE = SimpleNamespace(data={"target_format": target_format})
+            fields = [("colorManagementACE", 1, ("object", ("ColorManagement", [])))]
+            _, out = s._apply_downgrade_transforms("DataDocument", fields)
+            assert out[0][2] == expected, (target_format, out)
+    finally:
+        runtime.PROFILE = old_profile
+
+
 if __name__ == "__main__":
     test_drop_unknown_identity_and_drop()
     test_narrow_identity_and_change()
     test_project_identity_and_reorder()
+    test_color_management_registry_gate()
     print("identity self-check passed")

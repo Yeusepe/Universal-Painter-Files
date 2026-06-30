@@ -1064,15 +1064,16 @@ class TransformMixin:
             if not self._get_field(fields, "tangentSpaceMode"):
                 ts_tc = self._get_member_type(obj_name, "tangentSpaceMode") or 9
                 self._set_field(fields, "tangentSpaceMode", ts_tc, ("primitive", ts_tc, self._pack_primitive(ts_tc, 0)))
-            for name in ("colorManagementACE", "colorManagementOCIO"):
-                cm_field = self._get_field(fields, name)
-                if cm_field:
-                    cm_tc = self._get_member_type(obj_name, name) or cm_field[1]
-                    cm_val = cm_field[2]
-                    if cm_val[0] == "object" and isinstance(cm_val[1], tuple):
-                        self._set_field(fields, name, cm_tc, ("object", ("", None)))
-                    else:
-                        self._set_field(fields, name, cm_tc, ("object_null", b""))
+            if runtime.PROFILE.data.get("target_format", "inline") != "registry":
+                for name in ("colorManagementACE", "colorManagementOCIO"):
+                    cm_field = self._get_field(fields, name)
+                    if cm_field:
+                        cm_tc = self._get_member_type(obj_name, name) or cm_field[1]
+                        cm_val = cm_field[2]
+                        if cm_val[0] == "object" and isinstance(cm_val[1], tuple):
+                            self._set_field(fields, name, cm_tc, ("object", ("", None)))
+                        else:
+                            self._set_field(fields, name, cm_tc, ("object_null", b""))
 
         if obj_name == "DataStackActions":
             actions_field = self._get_field(fields, "actions")
