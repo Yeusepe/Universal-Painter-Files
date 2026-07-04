@@ -232,6 +232,23 @@ def _snap_target(to, edges):
     return max(fits, key=_vkey) if fits else to
 
 
+def _snap_source(frm, edges):
+    """Snap a source version to the graph node whose format it shares, so the transform
+    for that format is used. Minors within a major share the file format UNLESS a dedicated
+    minor-step exists (e.g. v12.1 has its own edge), so snap DOWN to the nearest node <= frm
+    WITHIN THE SAME MAJOR. Staying in-major is what makes this safe: a v11.1 file resolves to
+    the '11' transform, never leaking down to '10'. If the source's major isn't in the graph
+    at all, return frm unchanged and let pathfinding report it unsupported."""
+    nodes = set(edges)
+    for d in edges.values():
+        nodes.update(d)
+    if frm in nodes:
+        return frm
+    fk = _vkey(frm, pad=999)
+    fits = [n for n in nodes if _vkey(n) <= fk and _vkey(n)[0] == fk[0]]
+    return max(fits, key=_vkey) if fits else frm
+
+
 def _discover_edges(profile_dir):
     """Map of adjacent steps available on disk: {from_label: {to_label: path}}.
     Version labels may be dotted (e.g. '8.1'), so this is a graph, not an int range."""
@@ -344,8 +361,9 @@ def load(name=None):
         return _load_one(name, profile_dir)         # not a pair name -> let open() error
     frm, to = m.group(1), m.group(2)
     edges = _discover_edges(profile_dir)
+    snapped_from = _snap_source(frm, edges)   # v11.1 -> v11: a minor source shares its major's format
     snapped = _snap_target(to, edges)
-    path = _find_path(edges, frm, snapped)
+    path = _find_path(edges, snapped_from, snapped)
     if not path:
         if _vkey(frm)[0] == _vkey(to)[0] and _vkey(frm) > _vkey(to):
             baseline = _major_baseline_profile(_vkey(to)[0], profile_dir)

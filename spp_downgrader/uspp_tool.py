@@ -78,10 +78,14 @@ def _edges():
 
 
 def compute_supported_versions(created_label):
-    """created version + every label reachable downward through adjacent steps."""
+    """created version + every label reachable downward through adjacent steps.
+    A minor-version source (e.g. 11.1) isn't itself a graph node, so start the walk
+    from the format node it shares (11) while still listing the created label."""
+    from lib import migration_profile as mp
     edges = _edges()
-    seen = {created_label}
-    stack = [created_label]
+    start = mp._snap_source(created_label, edges)
+    seen = {created_label, start}
+    stack = [start]
     while stack:
         cur = stack.pop()
         for nxt in edges.get(cur, {}):
@@ -100,8 +104,9 @@ def resolve_direction(s_label, t_label):
         return "native_upgrade", True
     from lib import migration_profile as mp
     edges = _edges()
-    snapped = mp._snap_target(t_label, edges)   # 8.3 -> 8.1: minors share the format, forward-compat covers the gap
-    path = mp._find_path(edges, s_label, snapped)
+    snapped_from = mp._snap_source(s_label, edges)   # 11.1 -> 11: a minor source shares its major's format
+    snapped = mp._snap_target(t_label, edges)        # 8.3 -> 8.1: minors share the format, forward-compat covers the gap
+    path = mp._find_path(edges, snapped_from, snapped)
     if path is None and sk[0] == tk[0]:
         return "downgrade", mp._major_baseline_profile(sk[0]) is not None
     return "downgrade", path is not None
@@ -190,7 +195,7 @@ def cmd_build(args):
         from lib import migration_profile as mp
         snapped = mp._snap_target(t_label, _edges())
         if snapped != t_label:
-            print(f"v{t_label} requested -> building for v{snapped} (shares the v{snapped[:1]}.x format; opens in v{t_label} and newer)")
+            print(f"v{t_label} requested -> building for v{snapped} (shares the v{snapped.split('.')[0]}.x format; opens in v{t_label} and newer)")
         os.environ["SPP_PROFILE"] = f"v{s_label}_to_v{t_label}"
         # The member-allowlist filter uses the version the file will OPEN in (the requested
         # target, incl. minor), not the snapped format boundary.
