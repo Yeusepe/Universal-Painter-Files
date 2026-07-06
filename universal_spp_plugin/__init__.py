@@ -11,6 +11,7 @@ import os
 import time
 import tempfile
 import traceback
+import contextlib
 
 import substance_painter.ui as sp_ui
 import substance_painter.project as sp_project
@@ -26,12 +27,14 @@ except ImportError:
     _PYSIDE = 2
     _QAction = QtWidgets.QAction
 
-from .lib import runner, version, dialogs, progress
+from .lib import runner, version, dialogs, progress, updater
 
 _menu = None
 _actions = []   # strong refs so Qt doesn't garbage-collect the menu actions
 _file_action = None
 _handled_launch = False   # open the launch-arg .uspp once per session, not on every reload
+_operation_active = False
+_update_check_running = False
 _CACHE = os.path.join(tempfile.gettempdir(), "USPPCache")
 
 
@@ -47,6 +50,17 @@ def _log(msg):
         sp_log.info(f"[UniversalSPP] {msg}")
     except Exception:
         print(f"[UniversalSPP] {msg}")
+
+
+@contextlib.contextmanager
+def _busy_operation():
+    global _operation_active
+    previous = _operation_active
+    _operation_active = True
+    try:
+        yield
+    finally:
+        _operation_active = previous
 
 
 def _prune_cache(max_age_days=7):
@@ -129,107 +143,234 @@ def on_open():
 
 
 def _open_path(src):
-    try:
-        if not runner.available():
-            dialogs.error("Converter not found.\nExpected bin/uspp_tool.exe beside the plugin.")
-            return
-        if src.lower().endswith(".spp"):
-            uspp = _temp_uspp()
-            argv, env = runner.pack_args(src, uspp)
-            ok, err = progress.run_with_progress(_parent(), "Reading project", argv, env)
-            if not ok:
-                dialogs.error(f"Could not read the project.\n{err}")
-                return
-        else:
-            uspp = src
-        target = version.detect_running()
-        if not target:
-            dialogs.error("Could not detect the running Painter version.")
-            return
-        plan = runner.run_plan(uspp, target)
-
-        if not plan.get("supported"):
-            dialogs.error(
-                f"This project was created in v{plan.get('source_version')} and cannot be "
-                f"converted to your version (v{plan.get('target_version')})."
-            )
-            return
-        if plan.get("lossy"):
-            if not dialogs.confirm_lossy(plan):
-                return
-        elif plan.get("direction") == "native_upgrade":
-            dialogs.info(
-                f"This project was created in v{plan['source_version']}. "
-                "Substance Painter will upgrade it to your version on open."
-            )
-
-        out = _temp_spp()
-        target_binary = version.running_binary()
-        _log(f"open: target=v{target}  binary={target_binary}")
-        argv, env = runner.build_args(uspp, target, out, target_binary=target_binary)
-        ok, err = progress.run_with_progress(_parent(), f"Converting project to v{target}", argv, env)
-        if not ok:
-            dialogs.error(f"Conversion failed.\n{err}")
-            return
-        # Don't pre-check is_open() (some builds report the empty/home state as open).
-        # Just open; if a project is genuinely loaded, Painter refuses -> close & retry.
+    with _busy_operation():
         try:
-            sp_project.open(out)
-        except Exception:
-            try:
-                dirty = sp_project.needs_saving()
-            except Exception:
-                dirty = False
-            if dirty and not dialogs.confirm(
-                "Close the current project and open the Universal file?\n"
-                "Unsaved changes in the current project will be lost."):
+            if not runner.available():
+                dialogs.error("Converter not found.\nExpected bin/uspp_tool.exe beside the plugin.")
                 return
+            if src.lower().endswith(".spp"):
+                uspp = _temp_uspp()
+                argv, env = runner.pack_args(src, uspp)
+                ok, err = progress.run_with_progress(_parent(), "Reading project", argv, env)
+                if not ok:
+                    dialogs.error(f"Could not read the project.\n{err}")
+                    return
+            else:
+                uspp = src
+            target = version.detect_running()
+            if not target:
+                dialogs.error("Could not detect the running Painter version.")
+                return
+            plan = runner.run_plan(uspp, target)
+
+            if not plan.get("supported"):
+                dialogs.error(
+                    f"This project was created in v{plan.get('source_version')} and cannot be "
+                    f"converted to your version (v{plan.get('target_version')})."
+                )
+                return
+            if plan.get("lossy"):
+                if not dialogs.confirm_lossy(plan):
+                    return
+            elif plan.get("direction") == "native_upgrade":
+                dialogs.info(
+                    f"This project was created in v{plan['source_version']}. "
+                    "Substance Painter will upgrade it to your version on open."
+                )
+
+            out = _temp_spp()
+            target_binary = version.running_binary()
+            _log(f"open: target=v{target}  binary={target_binary}")
+            argv, env = runner.build_args(uspp, target, out, target_binary=target_binary)
+            ok, err = progress.run_with_progress(_parent(), f"Converting project to v{target}", argv, env)
+            if not ok:
+                dialogs.error(f"Conversion failed.\n{err}")
+                return
+            # Don't pre-check is_open() (some builds report the empty/home state as open).
+            # Just open; if a project is genuinely loaded, Painter refuses -> close & retry.
             try:
-                sp_project.close()
+                sp_project.open(out)
             except Exception:
-                pass
-            sp_project.open(out)
-        _log(f"opened {uspp} as v{target}")
-    except Exception as e:
-        _log("on_open error: " + traceback.format_exc())
-        dialogs.error(f"Unexpected error opening Universal project:\n{e}")
+                try:
+                    dirty = sp_project.needs_saving()
+                except Exception:
+                    dirty = False
+                if dirty and not dialogs.confirm(
+                    "Close the current project and open the Universal file?\n"
+                    "Unsaved changes in the current project will be lost."):
+                    return
+                try:
+                    sp_project.close()
+                except Exception:
+                    pass
+                sp_project.open(out)
+            _log(f"opened {uspp} as v{target}")
+        except Exception as e:
+            _log("on_open error: " + traceback.format_exc())
+            dialogs.error(f"Unexpected error opening Universal project:\n{e}")
 
 
 def on_save():
-    try:
-        if not runner.available():
-            dialogs.error("Converter not found.\nExpected bin/uspp_tool.exe beside the plugin.")
-            return
-        if not sp_project.is_open():
-            dialogs.error("Open a project first.")
-            return
-        # We pack from the .spp on disk, so the only hard requirement is that the
-        # project has been saved to a file. needs_saving() is NOT a blocker (Painter
-        # often reports it True for trivial view state); we just best-effort flush.
+    with _busy_operation():
         try:
-            spp = sp_project.file_path()
-        except Exception:
-            spp = None
-        if not spp or not os.path.exists(spp):
-            dialogs.info("Save your project to a .spp first (File > Save), then export to Universal.")
-            return
-        try:
-            if sp_project.needs_saving():
-                sp_project.save()
+            if not runner.available():
+                dialogs.error("Converter not found.\nExpected bin/uspp_tool.exe beside the plugin.")
+                return
+            if not sp_project.is_open():
+                dialogs.error("Open a project first.")
+                return
+            # We pack from the .spp on disk, so the only hard requirement is that the
+            # project has been saved to a file. needs_saving() is NOT a blocker (Painter
+            # often reports it True for trivial view state); we just best-effort flush.
+            try:
+                spp = sp_project.file_path()
+            except Exception:
+                spp = None
+            if not spp or not os.path.exists(spp):
+                dialogs.info("Save your project to a .spp first (File > Save), then export to Universal.")
+                return
+            try:
+                if sp_project.needs_saving():
+                    sp_project.save()
+            except Exception as e:
+                _log(f"save flush skipped: {e}")
+            out = dialogs.save_uspp(os.path.splitext(spp)[0] + ".uspp")
+            if not out:
+                return
+            argv, env = runner.pack_args(spp, out)
+            ok, err = progress.run_with_progress(_parent(), "Saving Universal Project", argv, env)
+            if ok:
+                dialogs.info(f"Saved Universal project:\n{out}")
+            else:
+                dialogs.error(f"Export failed.\n{err}")
         except Exception as e:
-            _log(f"save flush skipped: {e}")
-        out = dialogs.save_uspp(os.path.splitext(spp)[0] + ".uspp")
-        if not out:
-            return
-        argv, env = runner.pack_args(spp, out)
-        ok, err = progress.run_with_progress(_parent(), "Saving Universal Project", argv, env)
-        if ok:
-            dialogs.info(f"Saved Universal project:\n{out}")
+            _log("on_save error: " + traceback.format_exc())
+            dialogs.error(f"Unexpected error saving Universal project:\n{e}")
+
+
+def _update_progress_dialog():
+    dlg = QtWidgets.QProgressDialog("Downloading update...", None, 0, 0, _parent())
+    dlg.setWindowTitle("Universal SPP")
+    dlg.setWindowModality(QtCore.Qt.ApplicationModal)
+    dlg.setCancelButton(None)
+    dlg.setMinimumDuration(0)
+    dlg.show()
+
+    def update(message, fraction):
+        dlg.setLabelText(message)
+        if fraction is None:
+            dlg.setRange(0, 0)
         else:
-            dialogs.error(f"Export failed.\n{err}")
-    except Exception as e:
-        _log("on_save error: " + traceback.format_exc())
-        dialogs.error(f"Unexpected error saving Universal project:\n{e}")
+            dlg.setRange(0, 100)
+            dlg.setValue(max(0, min(100, int(fraction * 100))))
+        app = QtWidgets.QApplication.instance()
+        if app:
+            app.processEvents()
+
+    return dlg, update
+
+
+def _install_update(info):
+    dlg, update_progress = _update_progress_dialog()
+    try:
+        updater.install_update(
+            info,
+            plugin_root=os.path.dirname(os.path.abspath(__file__)),
+            timeout=120,
+            progress=update_progress,
+        )
+    finally:
+        dlg.close()
+        dlg.deleteLater()
+    dialogs.update_installed(info.version)
+
+
+def _check_for_updates(manual=False):
+    global _update_check_running
+    if _update_check_running:
+        return
+    if _operation_active:
+        if manual:
+            dialogs.info("Try again after the current Universal SPP operation finishes.", "Universal SPP Updates")
+        else:
+            QtCore.QTimer.singleShot(60000, _auto_check_updates)
+        return
+
+    _update_check_running = True
+    settings = updater.load_settings()
+    try:
+        if manual or updater.should_auto_check(settings):
+            settings = updater.mark_checked(settings)
+        else:
+            return
+
+        try:
+            info = updater.get_latest_update(
+                current_version=updater.PLUGIN_VERSION,
+                include_prereleases=settings.get("include_prereleases", False),
+                timeout=10,
+            )
+        except Exception as e:
+            if manual:
+                dialogs.error(f"Could not check for updates.\n{e}", "Universal SPP Updates")
+            else:
+                _log(f"update check skipped: {e}")
+            return
+
+        if info is None:
+            if manual:
+                dialogs.up_to_date(updater.PLUGIN_VERSION)
+            return
+
+        if not manual and settings.get("skipped_version") == info.version:
+            _log(f"update v{info.version} skipped by user preference")
+            return
+
+        action, disable_auto = dialogs.prompt_update(info.version, updater.PLUGIN_VERSION, automatic=not manual)
+        if disable_auto:
+            settings["auto_check_enabled"] = False
+            updater.save_settings(settings)
+        if action == "skip":
+            settings["skipped_version"] = info.version
+            updater.save_settings(settings)
+            return
+        if action != "install":
+            return
+
+        try:
+            _install_update(info)
+        except Exception as e:
+            _log("update install error: " + traceback.format_exc())
+            dialogs.error(f"Update failed.\n{e}", "Universal SPP Updates")
+    finally:
+        _update_check_running = False
+
+
+def on_check_updates():
+    _check_for_updates(manual=True)
+
+
+def on_update_settings():
+    settings = updater.load_settings()
+    action, settings = dialogs.update_settings(
+        settings,
+        updater.format_last_checked(settings),
+        updater.RELEASES_PAGE_URL,
+    )
+    updater.save_settings(settings)
+    if action == "check_now":
+        _check_for_updates(manual=True)
+
+
+def _auto_check_updates():
+    try:
+        mw = _parent()
+        if mw is not None and hasattr(mw, "isVisible") and not mw.isVisible():
+            QtCore.QTimer.singleShot(10000, _auto_check_updates)
+            return
+    except Exception:
+        pass
+    _check_for_updates(manual=False)
 
 
 # --------------------------------------------------------------- lifecycle
@@ -246,7 +387,12 @@ def start_plugin():
     a_open.triggered.connect(on_open)
     a_save = _menu.addAction("Save as Universal...")
     a_save.triggered.connect(on_save)
-    _actions = [a_open, a_save]
+    _menu.addSeparator()
+    a_check_updates = _menu.addAction("Check for Updates...")
+    a_check_updates.triggered.connect(on_check_updates)
+    a_update_settings = _menu.addAction("Update Settings...")
+    a_update_settings.triggered.connect(on_update_settings)
+    _actions = [a_open, a_save, a_check_updates, a_update_settings]
     sp_ui.add_menu(_menu)
     global _file_action
     try:
@@ -265,6 +411,10 @@ def start_plugin():
         QtCore.QTimer.singleShot(0, _open_launch_if_gui_up)
     except Exception as e:
         _log(f"launch-arg handler setup failed: {e}")
+    try:
+        QtCore.QTimer.singleShot(8000, _auto_check_updates)
+    except Exception as e:
+        _log(f"automatic update check setup failed: {e}")
     _log(f"plugin started: '{_menu.title()}' with {len(_menu.actions())} actions, "
          f"main_window={'yes' if mw is not None else 'NO'}, PySide={_PYSIDE}")
 

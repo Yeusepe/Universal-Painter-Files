@@ -96,6 +96,9 @@ Common actions:
   pick a `.spp`, the plugin first packs it into a temporary `.uspp`, then plans
   the conversion, warns about lossy downgrades, builds a temporary `.spp`, and
   opens it.
+- **Universal > Check for Updates...** checks GitHub Releases for a newer plugin
+  build. The plugin can also check once per day on startup, but it always asks
+  before installing and requires a Painter restart to finish the update.
 
 More plugin detail is in
 [`universal_spp_plugin/README.md`](universal_spp_plugin/README.md).

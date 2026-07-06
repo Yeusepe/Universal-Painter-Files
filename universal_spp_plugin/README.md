@@ -11,6 +11,9 @@ The plugin keeps the UI small on purpose:
   `.spp`, the plugin automatically packs it into a temporary `.uspp` before it
   plans the conversion for the running Painter version, shows any lossy
   downgrade warning, builds a temporary `.spp`, and opens that copy.
+- **Check for Updates...** checks GitHub Releases for a newer plugin build.
+- **Update Settings...** controls daily update checks, prerelease checks, and
+  skipped update reminders.
 
 The plugin does not contain the conversion logic itself. It is a thin Qt/Painter
 integration layer over `bin/uspp_tool.exe`.
@@ -84,6 +87,29 @@ If the `.uspp` was authored in an older version than the one you are running,
 the converter rebuilds the stored project and lets Painter perform its normal
 native upgrade when opening it.
 
+### Check for updates
+
+Choose **Universal > Check for Updates...** to check the public GitHub Releases
+page manually. If a newer release is available, the plugin asks before
+downloading or installing anything.
+
+The plugin also checks automatically once per day after startup. Automatic
+checks only show a prompt; Universal SPP never installs silently. The prompt can
+install the update, skip that specific version, remind you later, or turn off
+automatic update checks.
+
+Choose **Universal > Update Settings...** to:
+
+- Enable or disable daily update checks.
+- Include or exclude prerelease versions.
+- Clear a skipped version.
+- See when updates were last checked.
+- Open the releases page.
+
+When an update is installed, restart Substance 3D Painter to finish using the
+new plugin files. Reloading the plugins folder may work, but a restart is the
+cleanest path because Painter can cache plugin code.
+
 ## How The Plugin Is Written
 
 The plugin is split so the Painter and Qt code stays away from the converter
@@ -96,6 +122,7 @@ process code.
 | [`lib/version.py`](lib/version.py) | Detects the running Painter version from the Painter API when available, then falls back to parsing the install path. |
 | [`lib/dialogs.py`](lib/dialogs.py) | Qt dialogs for file picking, errors, info messages, and lossy conversion confirmation. |
 | [`lib/progress.py`](lib/progress.py) | Progress dialog wrapper around the long-running converter calls. |
+| [`lib/updater.py`](lib/updater.py) | Headless updater logic for settings, GitHub release parsing, ZIP validation, checksum checks, installation, and rollback. |
 
 ### Open Flow
 
@@ -186,6 +213,8 @@ That command builds `spp_downgrader/dist/uspp_tool.exe` and stages it into
 | **Conversion is reported as unsupported** | The source version cannot reach the target version through the profiles currently shipped in `spp_downgrader/profiles/`. |
 | **Loss warning appears** | The target version is older and cannot represent some source data. The warning is generated from the active downgrade profile. |
 | **Double-click does not open `.uspp`** | Open from the **Universal** menu. File association is best effort and can be blocked by system policy. |
+| **Update check fails** | Check your internet connection and try **Universal > Check for Updates...** again. Automatic check failures are logged silently. |
+| **Updated version does not appear** | Restart Substance 3D Painter. Some Painter sessions keep old plugin code cached after files are replaced. |
 
 Supported conversion profile chain:
 
