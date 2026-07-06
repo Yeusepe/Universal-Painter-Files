@@ -233,12 +233,6 @@ def _snap_target(to, edges):
 
 
 def _snap_source(frm, edges):
-    """Snap a source version to the graph node whose format it shares, so the transform
-    for that format is used. Minors within a major share the file format UNLESS a dedicated
-    minor-step exists (e.g. v12.1 has its own edge), so snap DOWN to the nearest node <= frm
-    WITHIN THE SAME MAJOR. Staying in-major is what makes this safe: a v11.1 file resolves to
-    the '11' transform, never leaking down to '10'. If the source's major isn't in the graph
-    at all, return frm unchanged and let pathfinding report it unsupported."""
     nodes = set(edges)
     for d in edges.values():
         nodes.update(d)
@@ -361,7 +355,7 @@ def load(name=None):
         return _load_one(name, profile_dir)         # not a pair name -> let open() error
     frm, to = m.group(1), m.group(2)
     edges = _discover_edges(profile_dir)
-    snapped_from = _snap_source(frm, edges)   # v11.1 -> v11: a minor source shares its major's format
+    snapped_from = _snap_source(frm, edges)
     snapped = _snap_target(to, edges)
     path = _find_path(edges, snapped_from, snapped)
     if not path:

@@ -78,9 +78,7 @@ def _edges():
 
 
 def compute_supported_versions(created_label):
-    """created version + every label reachable downward through adjacent steps.
-    A minor-version source (e.g. 11.1) isn't itself a graph node, so start the walk
-    from the format node it shares (11) while still listing the created label."""
+    """created version + every label reachable downward through adjacent steps."""
     from lib import migration_profile as mp
     edges = _edges()
     start = mp._snap_source(created_label, edges)
@@ -104,8 +102,8 @@ def resolve_direction(s_label, t_label):
         return "native_upgrade", True
     from lib import migration_profile as mp
     edges = _edges()
-    snapped_from = mp._snap_source(s_label, edges)   # 11.1 -> 11: a minor source shares its major's format
-    snapped = mp._snap_target(t_label, edges)        # 8.3 -> 8.1: minors share the format, forward-compat covers the gap
+    snapped_from = mp._snap_source(s_label, edges)
+    snapped = mp._snap_target(t_label, edges)
     path = mp._find_path(edges, snapped_from, snapped)
     if path is None and sk[0] == tk[0]:
         return "downgrade", mp._major_baseline_profile(sk[0]) is not None

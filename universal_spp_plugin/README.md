@@ -7,9 +7,10 @@ converter executable.
 The plugin keeps the UI small on purpose:
 
 - **Save as Universal...** packs the current saved `.spp` into a `.uspp`.
-- **Open Universal...** opens a `.uspp`, plans the conversion for the running
-  Painter version, shows any lossy downgrade warning, builds a temporary `.spp`,
-  and opens that copy.
+- **Open Universal...** opens a `.uspp` or a regular `.spp`. If you choose a
+  `.spp`, the plugin automatically packs it into a temporary `.uspp` before it
+  plans the conversion for the running Painter version, shows any lossy
+  downgrade warning, builds a temporary `.spp`, and opens that copy.
 
 The plugin does not contain the conversion logic itself. It is a thin Qt/Painter
 integration layer over `bin/uspp_tool.exe`.
@@ -67,16 +68,17 @@ The plugin packs from the `.spp` file on disk. If Painter reports unsaved
 changes, the plugin tries to save first, but the hard requirement is still that
 the project already has a real file path.
 
-### Open a `.uspp`
+### Open a `.uspp` or `.spp`
 
 1. Choose **Universal > Open Universal...**.
-2. Pick a `.uspp`.
+2. Pick a `.uspp` or a regular `.spp`.
 3. Review the warning if the target conversion is lossy.
 4. Confirm the conversion.
 
-The plugin detects the running Painter version, asks the converter for a plan,
-then builds a temporary `.spp` in the system temp directory under `USPPCache`.
-The source `.uspp` is not modified.
+When you pick a regular `.spp`, the plugin first packs it into a temporary
+`.uspp`. The plugin then detects the running Painter version, asks the converter
+for a plan, and builds a temporary `.spp` in the system temp directory under
+`USPPCache`. The source `.uspp` or `.spp` is not modified.
 
 If the `.uspp` was authored in an older version than the one you are running,
 the converter rebuilds the stored project and lets Painter perform its normal
@@ -97,26 +99,28 @@ process code.
 
 ### Open Flow
 
-`on_open()` asks for a `.uspp`, then `_open_path()` does the real work:
+`on_open()` asks for a `.uspp` or `.spp`, then `_open_path()` does the real
+work:
 
 1. Check that the converter is available.
-2. Detect the running Painter version, such as `10`, `12`, or `12.1`.
-3. Run:
+2. If the selected file is a `.spp`, pack it into a temporary `.uspp`.
+3. Detect the running Painter version, such as `10`, `12`, or `12.1`.
+4. Run:
 
    ```text
    uspp_tool.exe plan --uspp <file.uspp> --target <running-version>
    ```
 
-4. Stop if no profile path exists.
-5. Show the lossy conversion warning if the plan says the downgrade removes
+5. Stop if no profile path exists.
+6. Show the lossy conversion warning if the plan says the downgrade removes
    unsupported data.
-6. Run:
+7. Run:
 
    ```text
    uspp_tool.exe build --uspp <file.uspp> --target <running-version> -o <temp.spp>
    ```
 
-7. Open the temporary `.spp` with `substance_painter.project.open()`.
+8. Open the temporary `.spp` with `substance_painter.project.open()`.
 
 If Painter refuses to open because another dirty project is loaded, the plugin
 asks before closing the current project and retrying.

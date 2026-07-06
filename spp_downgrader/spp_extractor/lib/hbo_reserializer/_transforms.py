@@ -1188,10 +1188,12 @@ class TransformMixin:
             if not self._get_field(fields, "label"):
                 label_tc = self._get_member_type(obj_name, "label") or self.CODE_STRING
                 self._set_field(fields, "label", label_tc, ("string", b""))
-            sel_tc = self._get_member_type(obj_name, "selection") or 11
-            self._set_field(fields, "selection", sel_tc, ("primitive", sel_tc, self._pack_primitive(sel_tc, 0)))
-            tags_tc = self._get_member_type(obj_name, "tags") or 11
-            self._set_field(fields, "tags", tags_tc, ("primitive", tags_tc, self._pack_primitive(tags_tc, 0)))
+            if not self._get_field(fields, "selection"):
+                sel_tc = self._get_member_type(obj_name, "selection") or 15
+                self._set_field(fields, "selection", sel_tc, ("primitive", sel_tc, self._pack_primitive(sel_tc, 0)))
+            if not self._get_field(fields, "tags"):
+                tags_tc = self._get_member_type(obj_name, "tags") or 11
+                self._set_field(fields, "tags", tags_tc, ("primitive", tags_tc, self._pack_primitive(tags_tc, 0)))
             if not self._get_field(fields, "perChannelBlending"):
                 pcb_tc = self._get_member_type(obj_name, "perChannelBlending") or self.CODE_ARRAY
                 self._set_field(fields, "perChannelBlending", pcb_tc, self._build_action_group_blending())

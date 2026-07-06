@@ -40,7 +40,7 @@ The plugin shows a loss report before a lossy downgrade is built.
 
 | Path | Purpose |
 | --- | --- |
-| [`universal_spp_plugin/`](universal_spp_plugin/README.md) | The Painter plugin. It adds a **Universal** menu for saving and opening `.uspp` files inside Painter. |
+| [`universal_spp_plugin/`](universal_spp_plugin/README.md) | The Painter plugin. It adds a **Universal** menu for saving `.uspp` files and opening `.uspp` or `.spp` files inside Painter. |
 | [`spp_downgrader/`](spp_downgrader/README.md) | The conversion engine and command line tool. It can pack, inspect, plan, and build projects without launching Painter. |
 | [`build.ps1`](build.ps1) | Builds `uspp_tool.exe` with PyInstaller and stages it into `universal_spp_plugin/bin/`. |
 
@@ -92,8 +92,10 @@ Common actions:
 
 - **Universal > Save as Universal...** exports the current saved `.spp` as a
   `.uspp`.
-- **Universal > Open Universal...** opens a `.uspp`, plans the conversion, warns
-  about lossy downgrades, builds a temporary `.spp`, and opens it.
+- **Universal > Open Universal...** opens a `.uspp` or a regular `.spp`. If you
+  pick a `.spp`, the plugin first packs it into a temporary `.uspp`, then plans
+  the conversion, warns about lossy downgrades, builds a temporary `.spp`, and
+  opens it.
 
 More plugin detail is in
 [`universal_spp_plugin/README.md`](universal_spp_plugin/README.md).
