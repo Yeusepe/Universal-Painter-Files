@@ -25,26 +25,36 @@ function _indexDocument() {
   var byUid = {}
   var stacks = []
 
-  function visitLayer(layer, material, stack) {
+  function visitLayer(layer, material, stack, materialIndex, stackIndex) {
     byUid[String(layer.uid)] = {
       material: material.name,
       stack: stack.name,
+      material_index: materialIndex,
+      stack_index: stackIndex,
       channels: stack.channels
     }
     if (layer.layers !== undefined) {
       for (var i = 0; i < layer.layers.length; ++i) {
-        visitLayer(layer.layers[i], material, stack)
+        visitLayer(layer.layers[i], material, stack, materialIndex, stackIndex)
       }
     }
   }
 
   for (var mi in doc.materials) {
     var material = doc.materials[mi]
+    var materialIndex = parseInt(mi, 10)
     for (var si in material.stacks) {
       var stack = material.stacks[si]
-      stacks.push({material: material.name, stack: stack.name, channels: stack.channels})
+      var stackIndex = parseInt(si, 10)
+      stacks.push({
+        material: material.name,
+        stack: stack.name,
+        material_index: materialIndex,
+        stack_index: stackIndex,
+        channels: stack.channels
+      })
       for (var li in stack.layers) {
-        visitLayer(stack.layers[li], material, stack)
+        visitLayer(stack.layers[li], material, stack, materialIndex, stackIndex)
       }
     }
   }
@@ -88,6 +98,9 @@ function _captureStackChannels(req, index, outDir, assets) {
         path: name,
         material: stack.material,
         stack: stack.stack,
+        material_index: stack.material_index,
+        stack_index: stack.stack_index,
+        channel_index: c,
         channel: channel,
         kind: "full_stack_channel",
         mime: "image/png"
@@ -110,6 +123,9 @@ function _captureLayerChannels(req, uid, index, outDir, assets) {
       path: chName,
       material: entry.material,
       stack: entry.stack,
+      material_index: entry.material_index,
+      stack_index: entry.stack_index,
+      channel_index: c,
       channel: channel,
       kind: req.scope === "group" ? "group" : "content",
       mime: "image/png"

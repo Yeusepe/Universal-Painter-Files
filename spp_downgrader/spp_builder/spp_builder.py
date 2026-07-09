@@ -257,7 +257,7 @@ class SPPBuilder:
                          "continuing with current lossy downgrade behavior")
             else:
                 self.log(f"  Raster fallback assets available: {summary.get('raster_asset_count', 0)}; "
-                         "graph rewrite is still gated until bitmap replacement nodes are enabled")
+                         "will apply matching graph rewrites during HBO conversion")
 
     def _prepare_raster_resources(self, zf: zipfile.ZipFile):
         try:
@@ -292,6 +292,12 @@ class SPPBuilder:
                 self._raster_replacements.setdefault(key, []).append({
                     "url": prepared["url"],
                     "channel": asset.get("channel"),
+                    "channel_index": asset.get("channel_index"),
+                    "channel_type": asset.get("channel_type"),
+                    "material": asset.get("material"),
+                    "material_index": asset.get("material_index"),
+                    "stack": asset.get("stack"),
+                    "stack_index": asset.get("stack_index"),
                     "kind": asset.get("kind"),
                     "archive_path": arc,
                 })
@@ -654,8 +660,20 @@ class SPPBuilder:
                             target_label=os.environ.get("SPP_TARGET_VERSION") or (str(self.target_major) if self.target_major else None),
                         )
                         data_modified = True
-                        if getattr(serializer, "raster_stats", {}).get("mask_stacks_replaced"):
-                            self.log(f"  Raster masks replaced: {serializer.raster_stats['mask_stacks_replaced']}")
+                        raster_stats = getattr(serializer, "raster_stats", {}) or {}
+                        if any(raster_stats.get(k) for k in (
+                            "mask_stacks_replaced",
+                            "sources_replaced",
+                            "content_actions_replaced",
+                        )):
+                            parts = []
+                            if raster_stats.get("mask_stacks_replaced"):
+                                parts.append(f"masks={raster_stats['mask_stacks_replaced']}")
+                            if raster_stats.get("sources_replaced"):
+                                parts.append(f"sources={raster_stats['sources_replaced']}")
+                            if raster_stats.get("content_actions_replaced"):
+                                parts.append(f"actions={raster_stats['content_actions_replaced']}")
+                            self.log("  Raster replacements applied: " + ", ".join(parts))
                         self.log("  Transcoded HBO (v11 -> v10)")
                     except Exception as e:
                         self.log(f"  Warning: Failed to transcode HBO: {e}")
