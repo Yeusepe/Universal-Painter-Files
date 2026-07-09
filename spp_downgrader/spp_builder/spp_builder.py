@@ -81,6 +81,7 @@ class SPPBuilder:
         self.fast = bool(os.environ.get("SPP_FAST"))
         self._prepared_raster_resources = []
         self._raster_replacements = {}
+        self._raster_required_ids = set()
         # Apply migration profile overrides for dataset renames and data versions.
         self.V10_DATASET_RENAMES = PROFILE.dataset_renames or self.V10_DATASET_RENAMES
         self.V10_DATA_VERSION_MAP = PROFILE.data_version_map or self.V10_DATA_VERSION_MAP
@@ -251,6 +252,7 @@ class SPPBuilder:
                 requests.extend(HBOSerializer(raw).raster_plan(dataset_path=path, target_label=target_label))
             except Exception:
                 continue
+        self._raster_required_ids = {r.get("id") for r in requests if r.get("id")}
         summary = summarize(load_from_zip(zf), requests)
         if summary.get("raster_required"):
             missing = summary.get("missing_raster_fallbacks") or []
@@ -269,8 +271,13 @@ class SPPBuilder:
             return
         self._prepared_raster_resources = []
         self._raster_replacements = {}
+        required_ids = set(getattr(self, "_raster_required_ids", set()) or set())
         manifest = load_from_zip(zf)
         assets = list(manifest.get("assets") or [])
+        if self.target_major and not required_ids:
+            return
+        if required_ids:
+            assets = [a for a in assets if a.get("request_id") in required_ids]
         if not assets:
             return
         skipped = 0

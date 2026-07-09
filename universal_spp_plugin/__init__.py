@@ -43,6 +43,8 @@ _update_check_running = False
 _CACHE = os.path.join(tempfile.gettempdir(), "USPPCache")
 _TEMP_OPEN_MARK_CONTEXT = "UniversalSPP"
 _FILENAME_SAFE_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
+_RASTER_CAPTURE_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                      "raster_capture_companion", "raster_capture.js")
 
 
 def _parent():
@@ -227,6 +229,84 @@ def _copy_to_open_destination(temp_spp, source, opened_from, target):
     return out
 
 
+def _load_json_file(path):
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _js_path(path):
+    return os.path.abspath(path).replace("\\", "/")
+
+
+def _capture_raster_js(plan_path, manifest_path):
+    try:
+        import substance_painter.js as sp_js
+    except Exception as e:
+        raise RuntimeError(f"Raster capture is not available in this Painter build: {e}")
+    with open(_RASTER_CAPTURE_SCRIPT, "r", encoding="utf-8") as f:
+        script = f.read()
+    code = (
+        "(function(){\n"
+        + script
+        + "\n"
+        + "capture(" + json.dumps(_js_path(plan_path)) + ", " + json.dumps(_js_path(manifest_path)) + ");\n"
+        + "return {ok:true};\n"
+        + "})()"
+    )
+    return sp_js.evaluate(code)
+
+
+def _run_capture_with_dialog(plan_path, manifest_path):
+    dlg = QtWidgets.QProgressDialog("Capturing raster fallback pixels...", None, 0, 0, _parent())
+    dlg.setWindowTitle("Universal SPP")
+    dlg.setWindowModality(QtCore.Qt.ApplicationModal)
+    dlg.setCancelButton(None)
+    dlg.setMinimumDuration(0)
+    dlg.show()
+    app = QtWidgets.QApplication.instance()
+    if app:
+        app.processEvents()
+    try:
+        return _capture_raster_js(plan_path, manifest_path)
+    finally:
+        dlg.close()
+        dlg.deleteLater()
+
+
+def _raster_capture_for_pack(spp):
+    """Return a capture directory for pack --raster-capture-dir, or None if no
+    raster fallbacks are required. Raises if required fallbacks cannot be captured."""
+    os.makedirs(_CACHE, exist_ok=True)
+    capture_dir = tempfile.mkdtemp(prefix="raster_capture_", dir=_CACHE)
+    plan_path = os.path.join(capture_dir, "plan.json")
+    manifest_path = os.path.join(capture_dir, "manifest.json")
+    argv, env = runner.raster_plan_args(spp, plan_path)
+    ok, err = progress.run_with_progress(_parent(), "Planning raster fallbacks", argv, env)
+    if not ok:
+        shutil.rmtree(capture_dir, ignore_errors=True)
+        raise RuntimeError(f"Could not plan raster fallbacks.\n{err}")
+    plan = _load_json_file(plan_path)
+    requests = list(plan.get("requests") or [])
+    if not requests:
+        shutil.rmtree(capture_dir, ignore_errors=True)
+        return None
+    _run_capture_with_dialog(plan_path, manifest_path)
+    manifest = _load_json_file(manifest_path)
+    have = {a.get("request_id") for a in manifest.get("assets") or [] if a.get("request_id")}
+    missing = [r.get("id") for r in requests if r.get("id") not in have]
+    warnings = list(manifest.get("warnings") or [])
+    if missing or warnings:
+        shutil.rmtree(capture_dir, ignore_errors=True)
+        detail = []
+        if missing:
+            detail.append(f"{len(missing)} fallback request(s) had no captured pixels")
+        if warnings:
+            detail.extend(warnings[:5])
+        raise RuntimeError("Could not capture every required raster fallback.\n" + "\n".join(detail))
+    _log(f"captured {len(manifest.get('assets') or [])} raster fallback asset(s)")
+    return capture_dir
+
+
 # ------------------------------------------------------- double-click (launch argument)
 
 def _launch_uspp_arg():
@@ -283,10 +363,12 @@ def on_open():
 def _open_path(src):
     with _busy_operation():
         try:
+            packed_from_raw_spp = False
             if not runner.available():
                 dialogs.error("Converter not found.\nExpected bin/uspp_tool.exe beside the plugin.")
                 return
             if src.lower().endswith(".spp"):
+                packed_from_raw_spp = True
                 source_for_name = src
                 uspp = _temp_uspp(source_for_name)
                 argv, env = runner.pack_args(src, uspp)
@@ -310,6 +392,13 @@ def _open_path(src):
                 )
                 return
             if plan.get("lossy"):
+                if packed_from_raw_spp and plan.get("missing_raster_fallbacks"):
+                    dialogs.error(
+                        "This project needs raster fallback pixels for this Painter version.\n\n"
+                        "Open the project in a Painter version that can read it, then use "
+                        "Universal > Save as Universal so the fallback pixels can be captured."
+                    )
+                    return
                 if not dialogs.confirm_lossy(plan):
                     return
             elif plan.get("direction") == "native_upgrade":
@@ -381,12 +470,21 @@ def on_save():
             out = dialogs.save_uspp(os.path.splitext(spp)[0] + ".uspp")
             if not out:
                 return
-            argv, env = runner.pack_args(spp, out)
-            ok, err = progress.run_with_progress(_parent(), "Saving Universal Project", argv, env)
-            if ok:
-                dialogs.info(f"Saved Universal project:\n{out}")
-            else:
-                dialogs.error(f"Export failed.\n{err}")
+            capture_dir = None
+            try:
+                capture_dir = _raster_capture_for_pack(spp)
+                argv, env = runner.pack_args(spp, out, raster_capture_dir=capture_dir)
+                ok, err = progress.run_with_progress(_parent(), "Saving Universal Project", argv, env)
+                if ok:
+                    dialogs.info(f"Saved Universal project:\n{out}")
+                else:
+                    dialogs.error(f"Export failed.\n{err}")
+            except Exception as e:
+                _log("raster capture error: " + traceback.format_exc())
+                dialogs.error(f"Export failed while capturing raster fallbacks.\n{e}")
+            finally:
+                if capture_dir:
+                    shutil.rmtree(capture_dir, ignore_errors=True)
         except Exception as e:
             _log("on_save error: " + traceback.format_exc())
             dialogs.error(f"Unexpected error saving Universal project:\n{e}")

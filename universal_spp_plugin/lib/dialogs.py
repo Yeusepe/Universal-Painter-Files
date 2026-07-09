@@ -66,7 +66,19 @@ def confirm(message, title="Universal SPP"):
 def confirm_lossy(plan):
     """Show the plain-English lossy warning. Returns True if the user chooses Continue."""
     QtWidgets = _qt()
-    bullets = "\n".join(f"  •  {f}" for f in plan.get("lost_features", []))
+    items = list(plan.get("lost_features", []) or [])
+    missing_raster = list(plan.get("missing_raster_fallbacks", []) or [])
+    if missing_raster:
+        items.append(
+            f"{len(missing_raster)} raster fallback(s) are missing; affected unsupported "
+            "layers or folders may open blank."
+        )
+    editable_loss = list(plan.get("editable_loss", []) or [])
+    if editable_loss:
+        items.append("Some fallback areas will be flattened: " + ", ".join(editable_loss))
+    if not items:
+        items.append("Some unsupported data may be changed.")
+    bullets = "\n".join(f"  - {f}" for f in items)
     text = (
         f"This project was created in Substance Painter v{plan['source_version']}, "
         f"and will be converted to v{plan['target_version']}.\n\n"

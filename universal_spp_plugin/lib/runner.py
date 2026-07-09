@@ -122,9 +122,17 @@ def build_args(uspp, target, out_spp, target_binary=None):
     return _argv("build", "--uspp", uspp, "--target", target, "-o", out_spp), env
 
 
-def pack_args(spp, out_uspp):
+def raster_plan_args(spp, out_plan, targets="all-lower"):
+    """(argv, env) to write a raster fallback capture plan for a saved .spp."""
+    return _argv("raster-plan", spp, "--targets", targets, "-o", out_plan), {}
+
+
+def pack_args(spp, out_uspp, raster_capture_dir=None):
     """(argv, env) to write the universal .uspp from a saved .spp."""
-    return _argv("pack", spp, "-o", out_uspp), {}
+    argv = _argv("pack", spp, "-o", out_uspp)
+    if raster_capture_dir:
+        argv.extend(["--raster-capture-dir", raster_capture_dir])
+    return argv, {}
 
 
 if __name__ == "__main__":

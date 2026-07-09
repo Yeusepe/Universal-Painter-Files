@@ -106,7 +106,16 @@ function _requestIndex(req, field, marker) {
   return _pathIndexAfter(req, marker)
 }
 
-function _captureStackChannels(req, index, outDir, assets) {
+function _assetFromCached(base, req) {
+  var item = {}
+  for (var k in base) {
+    item[k] = base[k]
+  }
+  item.request_id = req.id
+  return item
+}
+
+function _captureStackChannels(req, index, outDir, assets, cache) {
   var materialIndex = _requestIndex(req, "material_index", "DataDocument.materials")
   var stackIndex = _requestIndex(req, "stack_index", "DataMaterial.stacks")
   for (var s = 0; s < index.stacks.length; ++s) {
@@ -119,48 +128,56 @@ function _captureStackChannels(req, index, outDir, assets) {
     }
     for (var c = 0; c < stack.channels.length; ++c) {
       var channel = stack.channels[c]
-      var name = _safe(req.id + "_" + stack.material + "_" + stack.stack + "_" + channel + ".png")
-      _save([stack.material, stack.stack, channel], outDir + name, _exportConfig("content", {
-        path: [stack.material, stack.stack],
-        name: channel
-      }))
-      assets.push({
-        request_id: req.id,
-        path: name,
-        material: stack.material,
-        stack: stack.stack,
-        material_index: stack.material_index,
-        stack_index: stack.stack_index,
-        channel_index: c,
-        channel: channel,
-        kind: "full_stack_channel",
-        mime: "image/png"
-      })
+      var key = "stack|" + stack.material_index + "|" + stack.stack_index + "|" + channel
+      if (cache[key] === undefined) {
+        var name = _safe("stack_" + stack.material_index + "_" + stack.stack_index + "_" + channel + ".png")
+        _save([stack.material, stack.stack, channel], outDir + name, _exportConfig("content", {
+          path: [stack.material, stack.stack],
+          name: channel
+        }))
+        cache[key] = {
+          path: name,
+          material: stack.material,
+          stack: stack.stack,
+          material_index: stack.material_index,
+          stack_index: stack.stack_index,
+          channel_index: c,
+          channel: channel,
+          kind: "full_stack_channel",
+          mime: "image/png"
+        }
+      }
+      assets.push(_assetFromCached(cache[key], req))
     }
   }
 }
 
-function _captureLayerChannels(req, uid, index, outDir, assets) {
+function _captureLayerChannels(req, uid, index, outDir, assets, cache) {
   var entry = index.byUid[String(uid)]
   for (var c = 0; c < entry.channels.length; ++c) {
     var channel = entry.channels[c]
-    var chName = _safe(req.id + "_" + channel + ".png")
-    _save([uid, channel], outDir + chName, _exportConfig("content", {
-      path: [entry.material, entry.stack],
-      name: channel
-    }))
-    assets.push({
-      request_id: req.id,
-      path: chName,
-      material: entry.material,
-      stack: entry.stack,
-      material_index: entry.material_index,
-      stack_index: entry.stack_index,
-      channel_index: c,
-      channel: channel,
-      kind: req.scope === "group" ? "group" : "content",
-      mime: "image/png"
-    })
+    var key = "layer|" + uid + "|" + channel
+    if (cache[key] === undefined) {
+      var chName = _safe("layer_" + uid + "_" + channel + ".png")
+      _save([uid, channel], outDir + chName, _exportConfig("content", {
+        path: [entry.material, entry.stack],
+        name: channel
+      }))
+      cache[key] = {
+        path: chName,
+        material: entry.material,
+        stack: entry.stack,
+        material_index: entry.material_index,
+        stack_index: entry.stack_index,
+        channel_index: c,
+        channel: channel,
+        kind: "content",
+        mime: "image/png"
+      }
+    }
+    var asset = _assetFromCached(cache[key], req)
+    asset.kind = req.scope === "group" ? "group" : "content"
+    assets.push(asset)
   }
 }
 
@@ -171,6 +188,7 @@ function capture(planPath, manifestPath) {
   var assets = []
   var warnings = []
   var requests = plan.requests || []
+  var cache = {}
 
   for (var i = 0; i < requests.length; ++i) {
     var req = requests[i]
@@ -180,13 +198,17 @@ function capture(planPath, manifestPath) {
 
     try {
       if (req.kind === "mask" && uid !== null && uid !== undefined) {
-        var maskName = _safe(req.id + "_mask.png")
-        _save([uid, "mask"], outDir + maskName, _exportConfig("mask"))
-        assets.push({request_id: req.id, path: maskName, kind: "mask", mime: "image/png"})
+        var maskKey = "mask|" + uid
+        if (cache[maskKey] === undefined) {
+          var maskName = _safe("mask_" + uid + ".png")
+          _save([uid, "mask"], outDir + maskName, _exportConfig("mask"))
+          cache[maskKey] = {path: maskName, kind: "mask", mime: "image/png"}
+        }
+        assets.push(_assetFromCached(cache[maskKey], req))
       } else if (req.scope === "full_stack_channel") {
-        _captureStackChannels(req, index, outDir, assets)
+        _captureStackChannels(req, index, outDir, assets, cache)
       } else if (uid !== null && uid !== undefined && index.byUid[String(uid)]) {
-        _captureLayerChannels(req, uid, index, outDir, assets)
+        _captureLayerChannels(req, uid, index, outDir, assets, cache)
       } else {
         warnings.push("request " + req.id + " had no capturable layer uid")
       }

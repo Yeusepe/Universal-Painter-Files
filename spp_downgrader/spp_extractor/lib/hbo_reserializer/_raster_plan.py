@@ -219,6 +219,8 @@ class RasterPlanner:
             return {"method": "alg.mapexport.save", "selector": [ctx.get("layer_uid"), "mask"]}
         if scope in (S_SOURCE, S_CONTENT_ACTION, S_LAYER):
             return {"method": "alg.mapexport.save", "selector": [ctx.get("layer_uid"), "<channel>"]}
+        if scope == S_GROUP and ctx.get("layer_uid") is not None:
+            return {"method": "alg.mapexport.save", "selector": [ctx.get("layer_uid"), "<channel>"]}
         return {
             "method": "alg.mapexport.save",
             "selector": ["<material>", "<stack>", "<channel>"],

@@ -130,6 +130,7 @@ class RasterPlanScopeTests(unittest.TestCase):
         ])
         reqs = self.collect(root)
         self.assertEqual(reqs[0]["scope"], rp.S_GROUP)
+        self.assertEqual(reqs[0]["capture"]["selector"], [10, "<channel>"])
         self.assertEqual(reqs[0]["preserves_editability"], "low")
 
     def test_nested_document_requests_include_material_and_stack_indexes(self):
