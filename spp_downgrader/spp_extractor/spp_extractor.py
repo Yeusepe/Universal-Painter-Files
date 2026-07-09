@@ -418,7 +418,8 @@ class SPPExtractor:
                 return value
         return value
 
-    def save_as_uspp(self, extraction: SPPExtraction, output_path: str, extra_manifest: dict = None):
+    def save_as_uspp(self, extraction: SPPExtraction, output_path: str,
+                     extra_manifest: dict = None, raster_capture_dir: str = None):
         """Save extraction result as a USPP (ZIP) archive. extra_manifest merges extra
         top-level fields into manifest.json (e.g. created_version, supported_versions)."""
         output_path = Path(output_path)
@@ -488,6 +489,16 @@ class SPPExtractor:
                                json.dumps(ds.decoded, indent=2, default=str))
 
             zf.writestr('datasets.json', json.dumps(datasets_info, indent=2))
+            try:
+                from lib.raster_manifest import add_capture_dir_to_zip
+                add_capture_dir_to_zip(zf, raster_capture_dir)
+            except Exception as e:
+                zf.writestr('raster/manifest.json', json.dumps({
+                    "version": 1,
+                    "requests": [],
+                    "assets": [],
+                    "warnings": [f"could not attach raster capture: {e}"],
+                }, indent=2))
 
         print(f"  Created USPP archive: {output_path}")
         print(f"  Datasets: {len(extraction.datasets)}")

@@ -18,6 +18,7 @@ import sys
 import json
 import zipfile
 import argparse
+import struct
 
 TOOL_VERSION = "1.0.0"
 FORMAT_VERSION = 2
@@ -58,6 +59,12 @@ def load_manifest(uspp_path):
         except KeyError:
             meta = {}
     return manifest, meta
+
+
+def load_raster_manifest(uspp_path):
+    with zipfile.ZipFile(uspp_path) as z:
+        from lib.raster_manifest import load_from_zip
+        return load_from_zip(z)
 
 
 def created_version_of(manifest, meta):
@@ -110,6 +117,100 @@ def resolve_direction(s_label, t_label):
     return "downgrade", path is not None
 
 
+def _reload_profile_engine():
+    import importlib
+    for name in ("lib.migration_profile", "lib.hbo_reserializer"):
+        if name in sys.modules:
+            importlib.reload(sys.modules[name])
+    from lib import hbo_reserializer as hr
+    return hr
+
+
+def _bind_raster_target(s_label, t_label):
+    os.environ["SPP_PROFILE"] = f"v{s_label}_to_v{t_label}"
+    os.environ["SPP_TARGET_VERSION"] = t_label
+    hr = _reload_profile_engine()
+    try:
+        hr.runtime.TARGET_MEMBERS = hr.runtime.load_members(t_label)
+    except Exception:
+        hr.runtime.TARGET_MEMBERS = None
+    return hr
+
+
+def _hbo_raster_requests(raw, dataset_path, s_label, t_label):
+    if len(raw) < 12 or struct.unpack("<I", raw[:4])[0] != 0x1B7C2FDD:
+        return []
+    hr = _bind_raster_target(s_label, t_label)
+    try:
+        return hr.HBOSerializer(raw).raster_plan(dataset_path=dataset_path, target_label=t_label)
+    except Exception:
+        return []
+
+
+def _raster_requests_from_uspp(uspp_path, s_label, t_label):
+    out = []
+    with zipfile.ZipFile(uspp_path) as z:
+        try:
+            datasets = json.loads(z.read("datasets.json").decode("utf-8"))
+        except Exception:
+            return out
+        for path, info in datasets.items():
+            if not info.get("is_hbo"):
+                continue
+            data_file = info.get("data_file")
+            if not data_file:
+                continue
+            try:
+                raw = z.read(data_file)
+            except Exception:
+                continue
+            out.extend(_hbo_raster_requests(raw, path, s_label, t_label))
+    return out
+
+
+def _read_native_version_and_hbo(spp_path):
+    import h5py
+    from spp_extractor import _parse_project_settings
+    version = None
+    items = []
+    with h5py.File(spp_path, "r") as f:
+        if "projectsettings.ini" in f:
+            try:
+                settings = bytes(f["projectsettings.ini"][()])
+                parsed = _parse_project_settings(settings) or {}
+                major = parsed.get(".versionAtLastSave/major")
+                if major is None:
+                    major = parsed.get(".versionAtCreation/major")
+                minor = parsed.get(".versionAtLastSave/minor")
+                if minor is None:
+                    minor = parsed.get(".versionAtCreation/minor")
+                if major is not None:
+                    version = ver_label(int(major), int(minor or 0))
+            except Exception:
+                pass
+
+        def visit(name, obj):
+            try:
+                import h5py as _h5py
+                if not isinstance(obj, _h5py.Dataset):
+                    return
+                raw = bytes(obj[()])
+                if len(raw) >= 12 and struct.unpack("<I", raw[:4])[0] == 0x1B7C2FDD:
+                    items.append((name, raw))
+            except Exception:
+                pass
+
+        f.visititems(visit)
+    return version, items
+
+
+def _targets_for_raster_plan(source_label, targets_arg):
+    if targets_arg == "all-lower":
+        return [v for v in compute_supported_versions(source_label)
+                if _vkey(v) < _vkey(source_label)]
+    return [ver_label(*parse_ver(v.strip())) for v in str(targets_arg).split(",") if v.strip()]
+
+
 # ------------------------------------------------------------------- subcommands
 
 def cmd_pack(args):
@@ -128,7 +229,12 @@ def cmd_pack(args):
     }
     if created:
         extra["supported_versions"] = compute_supported_versions(ver_label(created["major"], created["minor"]))
-    ex.save_as_uspp(extraction, args.output, extra_manifest=extra)
+    ex.save_as_uspp(
+        extraction,
+        args.output,
+        extra_manifest=extra,
+        raster_capture_dir=getattr(args, "raster_capture_dir", None),
+    )
     print(f"packed -> {args.output}")
     return 0
 
@@ -157,21 +263,77 @@ def cmd_plan(args):
     direction, supported = resolve_direction(s_label, t_label)
 
     lost = []
+    raster_requests = []
+    raster_summary = {}
     if direction == "downgrade" and supported:
         from lib import migration_profile as mp
         from lib.lossiness import build_lossiness_report
+        from lib.raster_manifest import summarize
         profile = mp.load(f"v{s_label}_to_v{t_label}")
         lost = build_lossiness_report(profile)
+        raster_requests = _raster_requests_from_uspp(args.uspp, s_label, t_label)
+        raster_summary = summarize(load_raster_manifest(args.uspp), raster_requests)
 
-    print(json.dumps({
+    result = {
         "direction": direction,
         "supported": supported,
-        "lossy": bool(lost),
+        "lossy": bool(lost) or bool(raster_requests),
         "lost_features": lost,
         "source_version": s_label,
         "target_version": t_label,
         "tool_version": TOOL_VERSION,
-    }, indent=2))
+    }
+    if raster_summary:
+        result.update(raster_summary)
+    else:
+        result.update({
+            "raster_required": False,
+            "raster_available": False,
+            "missing_raster_fallbacks": [],
+            "editable_loss": [],
+        })
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_raster_plan(args):
+    s_label, items = _read_native_version_and_hbo(args.input)
+    if not s_label:
+        print(json.dumps({"error": "could not detect source Painter version"}))
+        return 2
+    targets = _targets_for_raster_plan(s_label, args.targets)
+    result = {
+        "version": 1,
+        "source": args.input,
+        "source_version": s_label,
+        "targets": targets,
+        "requests": [],
+        "assets": [],
+        "warnings": [],
+    }
+    for t_label in targets:
+        direction, supported = resolve_direction(s_label, t_label)
+        if direction != "downgrade" or not supported:
+            result["warnings"].append(f"no downgrade path from v{s_label} to v{t_label}")
+            continue
+        for dataset_path, raw in items:
+            result["requests"].extend(_hbo_raster_requests(raw, dataset_path, s_label, t_label))
+    # De-dupe identical request ids across datasets/targets after all targets are scanned.
+    seen = set()
+    deduped = []
+    for req in result["requests"]:
+        rid = req.get("id")
+        if rid in seen:
+            continue
+        seen.add(rid)
+        deduped.append(req)
+    result["requests"] = deduped
+    text = json.dumps(result, indent=2)
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as f:
+            f.write(text)
+    else:
+        print(text)
     return 0
 
 
@@ -230,7 +392,8 @@ def main():
     ap.add_argument("-v", "--verbose", action="store_true")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("pack"); p.add_argument("input"); p.add_argument("-o", "--output", required=True); p.set_defaults(fn=cmd_pack)
+    p = sub.add_parser("pack"); p.add_argument("input"); p.add_argument("-o", "--output", required=True); p.add_argument("--raster-capture-dir"); p.set_defaults(fn=cmd_pack)
+    p = sub.add_parser("raster-plan"); p.add_argument("input"); p.add_argument("--targets", default="all-lower"); p.add_argument("-o", "--output"); p.set_defaults(fn=cmd_raster_plan)
     p = sub.add_parser("plan"); p.add_argument("--uspp", required=True); p.add_argument("--target", required=True); p.set_defaults(fn=cmd_plan)
     p = sub.add_parser("build"); p.add_argument("--uspp", required=True); p.add_argument("--target", required=True); p.add_argument("-o", "--output", required=True); p.set_defaults(fn=cmd_build)
     p = sub.add_parser("info"); p.add_argument("--uspp", required=True); p.set_defaults(fn=cmd_info)

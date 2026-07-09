@@ -21,6 +21,7 @@ FIELD_REKIND = None
 FIELD_VALUE_TRANSFORM = None
 PRIMITIVE_RETYPE = None
 SCHEMA_DEFAULTS = None
+BLEND_MAX = None
 
 # Substance graph names whose procedural SOURCES must be dropped because the target's
 # substance engine can't read the cooked .sbsasm format (e.g. format-9 graphs vs v8.1's
@@ -153,7 +154,7 @@ def bind(profile=None):
     """(Re)bind the profile-derived globals from `profile` (default: the active profile)."""
     global PROFILE, V10_SCHEMA, V10_BAKING_SCHEMA, BAKING_TWEAK_RENAME, TYPE_RENAME
     global BAKING_BAKER_ID_RENAME, FIELD_RENAME, FIELD_RETYPE, FIELD_REKIND
-    global FIELD_VALUE_TRANSFORM, PRIMITIVE_RETYPE, SCHEMA_DEFAULTS
+    global FIELD_VALUE_TRANSFORM, PRIMITIVE_RETYPE, SCHEMA_DEFAULTS, BLEND_MAX
     if profile is None:
         from lib import migration_profile
         profile = migration_profile.ACTIVE
@@ -169,3 +170,9 @@ def bind(profile=None):
     FIELD_VALUE_TRANSFORM = profile.field_value_transform
     PRIMITIVE_RETYPE = profile.primitive_retype
     SCHEMA_DEFAULTS = profile.schema_defaults
+    try:
+        from lib import migration_profile
+        to_label = str(profile.data.get("to") or "")
+        BLEND_MAX = migration_profile.blend_max_for(to_label) if to_label else None
+    except Exception:
+        BLEND_MAX = None

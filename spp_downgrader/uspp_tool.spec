@@ -36,7 +36,7 @@ a = Analysis(
     hiddenimports=["h5py", "h5py.defs", "h5py.utils", "h5py._proxy", "h5py.h5ac",
                    "numpy", "mmh3", "yaml",
                    "lib.migration_profile", "lib.hbo_decode",
-                   "lib.lossiness", "lib.config_manager", "lib.type_code_mapper",
+                   "lib.lossiness", "lib.raster_manifest", "lib.config_manager", "lib.type_code_mapper",
                    "lib.hbo_parser", "lib.dict_remover", "hbo_encoder", "spp_builder",
                    "spp_extractor", "spp_ext_models", "spp_ext_decoder",
                    # hbo_reserializer is now a package; list its submodules explicitly.
@@ -44,7 +44,9 @@ a = Analysis(
                    "lib.hbo_reserializer.models", "lib.hbo_reserializer.serializer",
                    "lib.hbo_reserializer._readers", "lib.hbo_reserializer._write_inline",
                    "lib.hbo_reserializer._write_registry", "lib.hbo_reserializer._transforms",
-                   "lib.hbo_reserializer._schema", "lib.hbo_reserializer._helpers"],
+                   "lib.hbo_reserializer._schema", "lib.hbo_reserializer._helpers",
+                   "lib.hbo_reserializer._classify", "lib.hbo_reserializer._raster_plan",
+                   "lib.hbo_reserializer._raster_replace", "raster_resources"],
     hookspath=[], runtime_hooks=[], excludes=["tkinter", "PySide2", "PySide6", "PyQt5"],
     noarchive=False,
 )

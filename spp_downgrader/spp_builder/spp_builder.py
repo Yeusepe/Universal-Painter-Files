@@ -79,6 +79,8 @@ class SPPBuilder:
         self._downgrade_config = None
         # Fast mode: minimal output compression for throwaway temp files (plugin "Open").
         self.fast = bool(os.environ.get("SPP_FAST"))
+        self._prepared_raster_resources = []
+        self._raster_replacements = {}
         # Apply migration profile overrides for dataset renames and data versions.
         self.V10_DATASET_RENAMES = PROFILE.dataset_renames or self.V10_DATASET_RENAMES
         self.V10_DATA_VERSION_MAP = PROFILE.data_version_map or self.V10_DATA_VERSION_MAP
@@ -199,6 +201,11 @@ class SPPBuilder:
                 else:
                     _hr.runtime.TARGET_MEMBERS = None
 
+                if self.target_major:
+                    self._report_raster_fallbacks(zf, datasets_info)
+
+                self._prepare_raster_resources(zf)
+
                 # Progress accounting for the plugin UI (one tick per dataset written).
                 self._prog_total = max(1, len(datasets_info))
                 self._prog_done = 0
@@ -210,6 +217,7 @@ class SPPBuilder:
                 with h5py.File(str(output_spp_path), 'w', libver=('earliest', 'v110')) as hf:
                     # Recreate structure from tree
                     self._create_structure(hf, structure, zf, groups_info, datasets_info)
+                    self._inject_raster_resources(hf)
 
         except Exception as e:
             self.errors.append(f"Build failed: {e}")
@@ -220,6 +228,106 @@ class SPPBuilder:
         stats = os.path.getsize(output_spp_path)
         print(f"Created: {output_spp_path} ({stats / 1024 / 1024:.2f} MB)")
         return True
+
+    def _report_raster_fallbacks(self, zf: zipfile.ZipFile, datasets_info: Dict):
+        """Non-mutating report for raster fallbacks. Until bitmap-resource injection is
+        verified, missing assets intentionally do not change build output."""
+        try:
+            from lib.raster_manifest import load_from_zip, summarize
+        except Exception:
+            return
+        target_label = os.environ.get("SPP_TARGET_VERSION") or (str(self.target_major) if self.target_major else None)
+        requests = []
+        for path, info in datasets_info.items():
+            if not info.get("is_hbo"):
+                continue
+            data_file = info.get("data_file")
+            if not data_file:
+                continue
+            try:
+                raw = zf.read(data_file)
+                requests.extend(HBOSerializer(raw).raster_plan(dataset_path=path, target_label=target_label))
+            except Exception:
+                continue
+        summary = summarize(load_from_zip(zf), requests)
+        if summary.get("raster_required"):
+            missing = summary.get("missing_raster_fallbacks") or []
+            if missing:
+                self.log(f"  Raster fallbacks needed but missing: {len(missing)} request(s); "
+                         "continuing with current lossy downgrade behavior")
+            else:
+                self.log(f"  Raster fallback assets available: {summary.get('raster_asset_count', 0)}; "
+                         "graph rewrite is still gated until bitmap replacement nodes are enabled")
+
+    def _prepare_raster_resources(self, zf: zipfile.ZipFile):
+        try:
+            from lib.raster_manifest import load_from_zip
+            from raster_resources import RasterResourceError, prepare_png_resource
+        except Exception:
+            return
+        self._prepared_raster_resources = []
+        self._raster_replacements = {}
+        manifest = load_from_zip(zf)
+        assets = list(manifest.get("assets") or [])
+        if not assets:
+            return
+        skipped = 0
+        for asset in assets:
+            arc = asset.get("archive_path")
+            if not arc:
+                skipped += 1
+                continue
+            mime = (asset.get("mime") or "").lower()
+            if mime and mime != "image/png":
+                skipped += 1
+                self.log(f"  Raster asset skipped (not PNG): {arc}")
+                continue
+            try:
+                png = zf.read(arc)
+                request_id = asset.get("request_id") or asset.get("sha256") or f"asset_{len(self._prepared_raster_resources)}"
+                prepared = prepare_png_resource(png, request_id)
+                prepared["asset"] = dict(asset)
+                prepared["request_id"] = request_id
+                key = asset.get("request_id") or arc
+                self._raster_replacements.setdefault(key, []).append({
+                    "url": prepared["url"],
+                    "channel": asset.get("channel"),
+                    "kind": asset.get("kind"),
+                    "archive_path": arc,
+                })
+                self._prepared_raster_resources.append(prepared)
+            except RasterResourceError as e:
+                skipped += 1
+                self.log(f"  Raster asset skipped: {arc} ({e})")
+            except Exception as e:
+                skipped += 1
+                self.log(f"  Raster asset injection failed: {arc} ({e})")
+        if self._prepared_raster_resources:
+            self.log(f"  Prepared {len(self._prepared_raster_resources)} raster bitmap resource(s)")
+        if skipped:
+            self.log(f"  Skipped {skipped} raster asset(s)")
+
+    def _inject_raster_resources(self, hf: h5py.File):
+        try:
+            from raster_resources import write_prepared_resource
+        except Exception:
+            return
+        prepared_resources = list(getattr(self, "_prepared_raster_resources", []) or [])
+        if not prepared_resources:
+            return
+        injected = 0
+        skipped = 0
+        for prepared in prepared_resources:
+            try:
+                write_prepared_resource(hf, prepared, _m3_x64_128)
+                injected += 1
+            except Exception as e:
+                skipped += 1
+                self.log(f"  Raster asset injection failed: {prepared.get('token')} ({e})")
+        if injected:
+            self.log(f"  Injected {injected} raster bitmap resource(s)")
+        if skipped:
+            self.log(f"  Skipped {skipped} raster asset(s)")
 
     def _create_structure(self, hf: h5py.File, tree: Dict,
                           zf: zipfile.ZipFile, groups_info: Dict, datasets_info: Dict):
@@ -540,9 +648,14 @@ class SPPBuilder:
                         data = serializer.prune_and_reserialize(
                             blacklist,
                             target_data_version,
-                            overrides=(None if _target_fmt == "registry" else overrides)
+                            overrides=(None if _target_fmt == "registry" else overrides),
+                            raster_replacements=getattr(self, "_raster_replacements", None),
+                            dataset_path=path,
+                            target_label=os.environ.get("SPP_TARGET_VERSION") or (str(self.target_major) if self.target_major else None),
                         )
                         data_modified = True
+                        if getattr(serializer, "raster_stats", {}).get("mask_stacks_replaced"):
+                            self.log(f"  Raster masks replaced: {serializer.raster_stats['mask_stacks_replaced']}")
                         self.log("  Transcoded HBO (v11 -> v10)")
                     except Exception as e:
                         self.log(f"  Warning: Failed to transcode HBO: {e}")

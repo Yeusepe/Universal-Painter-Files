@@ -368,6 +368,73 @@ def load(name=None):
     return chain[0] if len(chain) == 1 else _compose(chain)
 
 
+def derive_introductions(profile_dir=None):
+    """{feature_name: earliest_version_label_it_was_introduced} derived from the per-step
+    blacklists already on disk -- DRY, no parallel hand-authored file to keep in sync.
+
+    A feature blacklisted in v{FROM}_to_v{TO} exists in FROM but not TO, i.e. it was
+    introduced at FROM. A feature can appear in several steps; we keep the LOWEST FROM
+    (earliest appearance). A sibling `feature_introduction.overrides.json` (same
+    base+overrides idiom as the profiles) can add/correct entries -- overrides win.
+    """
+    profile_dir = profile_dir or os.environ.get("SPP_PROFILE_DIR", _DEFAULT_PROFILE_DIR)
+    edges = _discover_edges(profile_dir)
+    intro = {}
+    for frm, tos in edges.items():
+        for _to, path in tos.items():
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                continue
+            for feat in data.get("blacklist", []):
+                cur = intro.get(feat)
+                if cur is None or _vkey(frm) < _vkey(cur):
+                    intro[feat] = frm
+    ov = os.path.join(profile_dir, "feature_introduction.overrides.json")
+    if os.path.exists(ov):
+        try:
+            with open(ov, "r", encoding="utf-8") as f:
+                intro.update(json.load(f).get("introductions", {}))
+        except Exception:
+            pass
+    return intro
+
+
+def blend_max_for(target_label, profile_dir=None):
+    """Highest blendingMode enum the target version supports, from
+    feature_introduction.overrides.json's `blend_max_by_version`, or None if unknown
+    (which disables blend-mode classification -- safe: nothing gets composited)."""
+    profile_dir = profile_dir or os.environ.get("SPP_PROFILE_DIR", _DEFAULT_PROFILE_DIR)
+    ov = os.path.join(profile_dir, "feature_introduction.overrides.json")
+    try:
+        with open(ov, "r", encoding="utf-8") as f:
+            table = json.load(f).get("blend_max_by_version", {})
+    except Exception:
+        return None
+    if target_label in table:
+        return int(table[target_label])
+    # fall back to the highest entry <= target (a minor shares its major's modes)
+    tk = _vkey(target_label)
+    fits = [(k, v) for k, v in table.items() if _vkey(k) <= tk]
+    return int(max(fits, key=lambda kv: _vkey(kv[0]))[1]) if fits else None
+
+
+def feature_floor(supported_versions):
+    """Lowest label in `supported_versions` -> features introduced at/below it need no
+    fallback (every supported target already has them). None if the list is empty."""
+    labels = [v for v in (supported_versions or []) if _vkey(v)]
+    return min(labels, key=_vkey) if labels else None
+
+
+def above_floor(intro_label, floor_label):
+    """True if a feature introduced at `intro_label` is newer than `floor_label`
+    (so it is a bake-fallback candidate at pack time, where the target is unknown)."""
+    if not intro_label or not floor_label:
+        return bool(intro_label)  # unknown floor -> treat everything as above it
+    return _vkey(intro_label) > _vkey(floor_label)
+
+
 # Active profile, loaded once. Falls back to an empty profile so a missing file
 # degrades to no-op transforms rather than crashing at import.
 try:

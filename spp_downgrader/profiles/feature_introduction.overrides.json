@@ -1,0 +1,5 @@
+{
+  "_comment": "Hand-authored additions to the introduction map derived from per-step blacklists (see migration_profile.derive_introductions). 'introductions' maps a feature/type/member name to the version label that introduced it (overrides the derived value). 'blend_max_by_version' maps a target version label to the highest blendingMode enum it supports; a target absent here disables blend-mode compositing for that target (safe). Populate from real projects/binaries; leaving values out is safe, not wrong.",
+  "introductions": {},
+  "blend_max_by_version": {}
+}

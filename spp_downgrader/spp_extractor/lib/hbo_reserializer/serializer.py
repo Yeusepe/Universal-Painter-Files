@@ -112,9 +112,56 @@ class HBOSerializer(HelperMixin, ReaderMixin, InlineWriterMixin, RegistryWriterM
         self.registry_defs = []
         self.identifier_blacklist = set()
         self.value_rewrites = {}
+        self.raster_replacements = {}
+        self.raster_dataset_path = None
+        self.raster_target_label = None
+        self.raster_stats = {}
         self._parse_v11_registry()
         self._parse_entry_headers()
         self._overrides = {}
+
+    def parse_root_object(self):
+        """Decode the stream's root object into the internal tree representation.
+
+        Non-mutating helper used by planning/reporting code. It intentionally does
+        not apply transforms or schema projection.
+        """
+        if self.ver_check == 1:
+            src = io.BytesIO(self.data[12:])
+            tag = self._read_u32(src)
+            if tag not in (0x12, 0x13):
+                raise ValueError("registry stream does not start with an object/root tag")
+            type_count = self._read_u32(src)
+            registry = self._parse_v11_registry_table(src, type_count) or []
+            return self._parse_v11_object(src, registry, [], 0)
+        if self.ver_check == 0:
+            return self._parse_inline_native()
+        raise ValueError(f"unsupported HBO version_check {self.ver_check}")
+
+    def raster_plan(self, dataset_path=None, target_label=None):
+        """Return raster fallback requests for this HBO stream without mutating it."""
+        from ._raster_plan import collect_raster_requests
+        return collect_raster_requests(
+            self.parse_root_object(),
+            dataset=dataset_path,
+            target=target_label,
+        )
+
+    def _apply_raster_replacements_to_root(self, root):
+        if not self.raster_replacements:
+            return root
+        try:
+            from ._raster_replace import apply_raster_replacements
+            root, stats = apply_raster_replacements(
+                root,
+                self.raster_replacements,
+                dataset=self.raster_dataset_path,
+                target=self.raster_target_label,
+            )
+            self.raster_stats = stats
+        except Exception:
+            self.raster_stats = {"mask_stacks_replaced": 0}
+        return root
 
     def _transcode_v11_registry(self, blacklist, data_version=None, max_array_items=None):
         if self.ver_check != 1:
@@ -129,6 +176,7 @@ class HBOSerializer(HelperMixin, ReaderMixin, InlineWriterMixin, RegistryWriterM
             registry = self._parse_v11_registry_table(src, _type_count) or []
             entries = []
             root = self._parse_v11_object(src, registry, entries, 0)
+            root = self._apply_raster_replacements_to_root(root)
             root = self._apply_transforms_recursive(root, keep_overrides=False)
             root = self._narrow_primitives(root)
             root = self._apply_targeted_overrides(root)
@@ -163,6 +211,7 @@ class HBOSerializer(HelperMixin, ReaderMixin, InlineWriterMixin, RegistryWriterM
             return None
         try:
             root = self._parse_inline_native()
+            root = self._apply_raster_replacements_to_root(root)
             root = self._apply_transforms_recursive(root, keep_overrides=False)
             root = self._apply_targeted_overrides(root)
             if blacklist:
@@ -187,6 +236,7 @@ class HBOSerializer(HelperMixin, ReaderMixin, InlineWriterMixin, RegistryWriterM
             type_count = self._read_u32(src)
             registry = self._parse_v11_registry_table(src, type_count) or []
             root = self._parse_v11_object(src, registry, [], 0)
+            root = self._apply_raster_replacements_to_root(root)
             root = self._apply_transforms_recursive(root, keep_overrides=False)
             root = self._narrow_primitives(root)           # blanket code-22->12 etc. (was inline-only)
             root = self._apply_targeted_overrides(root)
@@ -226,6 +276,7 @@ class HBOSerializer(HelperMixin, ReaderMixin, InlineWriterMixin, RegistryWriterM
             registry = self._parse_v11_registry_table(src, _type_count) or []
             entries = []
             root = self._parse_v11_object(src, registry, entries, 0)
+            root = self._apply_raster_replacements_to_root(root)
             if not entries and root and root[0]:
                 entries = [root]
         except Exception:
@@ -260,7 +311,7 @@ class HBOSerializer(HelperMixin, ReaderMixin, InlineWriterMixin, RegistryWriterM
 
         return self._patch_v10_root_length(dst.getvalue())
 
-    def prune_and_reserialize(self, blacklist, data_version=None, max_array_items=None, overrides=None, identifier_blacklist=None, value_rewrites=None, force_entry_headers=False):
+    def prune_and_reserialize(self, blacklist, data_version=None, max_array_items=None, overrides=None, identifier_blacklist=None, value_rewrites=None, force_entry_headers=False, raster_replacements=None, dataset_path=None, target_label=None):
         # We must output v10 Tagged format
         dst = io.BytesIO()
         header_version = 17 if data_version is None else int(data_version)
@@ -268,6 +319,10 @@ class HBOSerializer(HelperMixin, ReaderMixin, InlineWriterMixin, RegistryWriterM
         self._overrides = overrides or {}
         self.identifier_blacklist = set(identifier_blacklist or [])
         self.value_rewrites = value_rewrites or {}
+        self.raster_replacements = raster_replacements or {}
+        self.raster_dataset_path = dataset_path
+        self.raster_target_label = target_label
+        self.raster_stats = {}
 
         # Target a registry (v11/v12) format instead of v10 inline, per the profile.
         if runtime.PROFILE.data.get("target_format") == "registry" and self.ver_check == 1:

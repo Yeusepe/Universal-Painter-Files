@@ -1,0 +1,6 @@
+{
+  "description": "Universal SPP raster fallback capture companion. Uses legacy Painter mapexport APIs to export only requested fallback PNGs.",
+  "version": "0.1.0",
+  "license": "MIT",
+  "min_api_version": "1.0.0"
+}
