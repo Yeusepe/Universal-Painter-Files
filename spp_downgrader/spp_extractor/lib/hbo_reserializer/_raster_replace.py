@@ -11,6 +11,7 @@ from ._raster_plan import (
     S_CONTENT_ACTION,
     S_GROUP,
     S_MASK_STACK,
+    S_FULL_STACK_CHANNEL,
     S_SOURCE,
     collect_raster_requests,
 )
@@ -265,6 +266,44 @@ def _bitmap_fill_stack(url, uid_gen):
     return ("object", stack)
 
 
+def _raster_layer_stack(entries, channel_lookup, uid_gen):
+    fill, skipped = _bitmap_fill_action(
+        entries,
+        channel_lookup,
+        uid_gen,
+        "Universal SPP raster full stack",
+    )
+    if not fill:
+        return None, skipped
+    actions = ("DataStackActions", [
+        ("uid", 12, _p_i64(uid_gen.next())),
+        ("items", 19, ("array", ("object", [("object", fill)]))),
+    ])
+    layer = ("DataLayerColor", [
+        ("actions", 18, ("object", actions)),
+        ("colorTag", 9, _p_i32(0)),
+        ("enabled", 10, _p_bool(True)),
+        ("enabledGeometryMask", 10, _p_bool(True)),
+        ("enabledMeshDefault", 10, _p_bool(True)),
+        ("enabledMeshList", 17, ("array", ("object", []))),
+        ("enabledUVTileDefault", 10, _p_bool(True)),
+        ("enabledUVTileList", 17, ("array", ("object", []))),
+        ("gammaCompensation", 10, _p_bool(False)),
+        ("geometryMaskType", 9, _p_i32(0)),
+        ("label", 16, _string("Universal SPP raster full stack")),
+        ("maskActions", 18, ("object_null", b"")),
+        ("maskEnabled", 10, _p_bool(True)),
+        ("maskInitial", 9, _p_i32(1)),
+        ("perChannelBlending", 17, ("array", ("object", []))),
+        ("uid", 12, _p_i64(uid_gen.next())),
+    ])
+    stack = ("DataStackLayers", [
+        ("items", 19, ("array", ("object", [("object", layer)]))),
+        ("uid", 12, _p_i64(uid_gen.next())),
+    ])
+    return ("object", stack), skipped
+
+
 def _choose_mask_url(entries):
     for entry in entries or []:
         if entry.get("kind") == "mask" and entry.get("url"):
@@ -280,6 +319,7 @@ def _replacement_maps(root, replacements, dataset, target, requests=None):
     mask_urls = {}
     source_entries = {}
     action_entries = {}
+    full_stack_entries = {}
     for req in requests:
         entries = replacements.get(req.get("id")) or []
         scope = req.get("scope")
@@ -291,7 +331,9 @@ def _replacement_maps(root, replacements, dataset, target, requests=None):
             source_entries[int(req["object_uid"])] = entries
         elif scope in (S_CONTENT_ACTION, S_GROUP) and req.get("object_uid") is not None and entries:
             action_entries[int(req["object_uid"])] = entries
-    return mask_urls, source_entries, action_entries
+        elif scope == S_FULL_STACK_CHANNEL and req.get("stack_uid") is not None and entries:
+            full_stack_entries[int(req["stack_uid"])] = entries
+    return mask_urls, source_entries, action_entries, full_stack_entries
 
 
 def _empty_stats():
@@ -299,8 +341,10 @@ def _empty_stats():
         "mask_stacks_replaced": 0,
         "sources_replaced": 0,
         "content_actions_replaced": 0,
+        "full_stacks_replaced": 0,
         "source_replacements_skipped": 0,
         "content_actions_skipped": 0,
+        "full_stacks_skipped": 0,
         "channel_assets_skipped": 0,
     }
 
@@ -310,14 +354,14 @@ def apply_raster_replacements(root, replacements, *, dataset=None, target=None, 
     if not replacements:
         return root, stats
 
-    mask_urls, source_entries, action_entries = _replacement_maps(
+    mask_urls, source_entries, action_entries, full_stack_entries = _replacement_maps(
         root,
         replacements,
         dataset,
         target,
         requests=requests,
     )
-    if not (mask_urls or source_entries or action_entries):
+    if not (mask_urls or source_entries or action_entries or full_stack_entries):
         return root, stats
 
     channel_lookup = _channel_mask_lookup(root)
@@ -365,7 +409,33 @@ def apply_raster_replacements(root, replacements, *, dataset=None, target=None, 
             new_elems.append(elem)
         return new_elems, changed
 
-    def visit(obj):
+    def entries_for_stack(entries, ctx):
+        mi = ctx.get("material_index")
+        si = ctx.get("stack_index")
+        out = []
+        for entry in entries or []:
+            emi = _entry_int(entry, "material_index")
+            esi = _entry_int(entry, "stack_index")
+            if emi is None or esi is None:
+                continue
+            if mi is not None and emi != mi:
+                continue
+            if si is not None and esi != si:
+                continue
+            out.append(entry)
+        return out
+
+    def array_child_ctx(ctx, obj_name, field_name, index):
+        child = dict(ctx)
+        if obj_name == "DataDocument" and field_name == "materials":
+            child["material_index"] = index
+            child["stack_index"] = None
+        elif obj_name == "DataMaterial" and field_name == "stacks":
+            child["stack_index"] = index
+        return child
+
+    def visit(obj, ctx=None):
+        ctx = ctx or {}
         if not obj or obj[1] is None:
             return
         obj_name, fields = obj
@@ -378,18 +448,40 @@ def apply_raster_replacements(root, replacements, *, dataset=None, target=None, 
                 _set_field(fields, "maskActions", tcode, _bitmap_fill_stack(url, uid_gen))
                 stats["mask_stacks_replaced"] += 1
 
+        if obj_name == "DataMaterialStack":
+            stack_field = _field(fields, "stack")
+            if stack_field and stack_field[2][0] == "object" and isinstance(stack_field[2][1], tuple):
+                stack_uid = _uid_of(stack_field[2][1])
+                entries = full_stack_entries.get(stack_uid)
+                if entries:
+                    stack_value, skipped = _raster_layer_stack(
+                        entries_for_stack(entries, ctx),
+                        channel_lookup,
+                        uid_gen,
+                    )
+                    stats["channel_assets_skipped"] += skipped
+                    if stack_value:
+                        _set_field(fields, "stack", stack_field[1], stack_value)
+                        stats["full_stacks_replaced"] += 1
+                    else:
+                        stats["full_stacks_skipped"] += 1
+
         for name, tc, value in list(fields):
+            current = _field(fields, name)
+            if current:
+                tc = current[1]
+                value = current[2]
             if value[0] == "object" and isinstance(value[1], tuple):
-                visit(value[1])
+                visit(value[1], ctx)
             elif value[0] == "array" and value[1][0] == "object":
                 elems = value[1][1]
                 allow_sources = obj_name == "DataActionFill" and name == "sources"
                 new_elems, changed = replace_array_elements(elems, allow_sources)
                 if changed:
                     _set_field(fields, name, tc, ("array", ("object", new_elems)))
-                for elem in new_elems:
+                for i, elem in enumerate(new_elems):
                     if elem and elem[0] == "object" and isinstance(elem[1], tuple):
-                        visit(elem[1])
+                        visit(elem[1], array_child_ctx(ctx, obj_name, name, i))
 
-    visit(root)
+    visit(root, {})
     return root, stats

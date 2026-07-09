@@ -35,6 +35,10 @@ class RasterPlanScopeTests(unittest.TestCase):
         return clf.Classifier(
             schema={
                 "DataLayerColor": ["actions", "maskActions", "uid"],
+                "DataDocument": ["materials"],
+                "DataMaterial": ["stacks"],
+                "DataMaterialStack": ["stack"],
+                "DataStackLayers": ["items", "uid"],
                 "DataStackActions": ["items", "uid"],
                 "DataActionFill": ["sources", "uid"],
                 "DataActionGroup": ["subStack", "uid"],
@@ -42,8 +46,10 @@ class RasterPlanScopeTests(unittest.TestCase):
             },
             target_members=frozenset({
                 "DataLayerColor", "DataStackActions", "DataActionFill",
-                "DataActionGroup", "DataSourceBitmap", "uid", "items",
-                "actions", "maskActions", "sources", "subStack",
+                "DataActionGroup", "DataSourceBitmap", "DataDocument",
+                "DataMaterial", "DataMaterialStack", "DataStackLayers",
+                "uid", "items", "actions", "maskActions", "sources",
+                "subStack", "materials", "stacks", "stack",
             }),
             blacklist=blacklist,
             unknown_appearance_unsupported=True,
@@ -125,6 +131,29 @@ class RasterPlanScopeTests(unittest.TestCase):
         reqs = self.collect(root)
         self.assertEqual(reqs[0]["scope"], rp.S_GROUP)
         self.assertEqual(reqs[0]["preserves_editability"], "low")
+
+    def test_nested_document_requests_include_material_and_stack_indexes(self):
+        root = obj("DataDocument", [
+            field("materials", arr(obj("DataMaterial", [
+                field("stacks", arr(obj("DataMaterialStack", [
+                    field("stack", oval(obj("DataStackLayers", [
+                        field("uid", prim(9, 77), 9),
+                        field("items", arr(obj("DataLayerColor", [
+                            field("uid", prim(9, 10), 9),
+                            field("actions", oval(obj("DataStackActions", [
+                                field("items", arr(obj("DataActionFancy", [
+                                    field("uid", prim(9, 40), 9),
+                                ])), 0x13),
+                            ]))),
+                        ])), 0x13),
+                    ]))),
+                ])), 0x13),
+            ])), 0x13),
+        ])
+        reqs = self.collect(root)
+        self.assertEqual(reqs[0]["scope"], rp.S_CONTENT_ACTION)
+        self.assertEqual(reqs[0]["material_index"], 0)
+        self.assertEqual(reqs[0]["stack_index"], 0)
 
 
 if __name__ == "__main__":

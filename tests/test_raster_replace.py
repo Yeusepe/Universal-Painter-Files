@@ -200,6 +200,99 @@ class RasterReplaceTests(unittest.TestCase):
         self.assertEqual(len(sources), 2)
         self.assertEqual([int_field(s[1], "channelTypes") for s in sources], [1, 1 << 13])
 
+    def test_group_replacement_uses_group_scope_assets(self):
+        root = channel_doc(0)
+        group = obj("DataActionGroup", [
+            field("uid", prim(12, 70), 12),
+            field("subStack", oval(obj("DataStackActions", [
+                field("uid", prim(12, 71), 12),
+                field("items", arr(obj("DataActionGeneratorFancy", [
+                    field("uid", prim(12, 72), 12),
+                ])), 19),
+            ]))),
+        ])
+        root[1][1] = field("layers", arr(obj("DataLayerColor", [
+            field("uid", prim(12, 42), 12),
+            field("actions", oval(obj("DataStackActions", [
+                field("uid", prim(12, 100), 12),
+                field("items", arr(group), 19),
+            ]))),
+        ])), 19)
+
+        root, stats = rr.apply_raster_replacements(
+            root,
+            {"rf_group": [{
+                "url": "/Universal SPP Raster rf_group?version=abc.image",
+                "kind": "group",
+                "material_index": 0,
+                "stack_index": 0,
+                "channel_index": 0,
+            }]},
+            requests=[{"id": "rf_group", "scope": "group", "object_uid": 70}],
+        )
+
+        self.assertEqual(stats["content_actions_replaced"], 1)
+        layer = root[1][1][2][1][1][0][1]
+        stack = get_field(layer, "actions")[2][1]
+        fill = get_field(stack, "items")[2][1][1][0][1]
+        self.assertEqual(fill[0], "DataActionFill")
+        self.assertEqual(int_field(fill, "channelTypes"), 1)
+
+    def test_full_stack_replacement_flattens_stack_to_raster_layer(self):
+        root = obj("DataDocument", [
+            field("materials", arr(obj("DataMaterial", [
+                field("stacks", arr(obj("DataMaterialStack", [
+                    field("channels", arr(
+                        obj("DataChannel", [field("type", pvalue(0, 9), 9)]),
+                        obj("DataChannel", [field("type", pvalue(1, 9), 9)]),
+                    ), 19),
+                    field("stack", oval(obj("DataStackLayers", [
+                        field("uid", prim(12, 900), 12),
+                        field("items", arr(obj("DataLayerColor", [
+                            field("uid", prim(12, 42), 12),
+                            field("actions", oval(obj("DataStackActions", [
+                                field("uid", prim(12, 100), 12),
+                                field("items", ("array", ("object", [])), 19),
+                            ]))),
+                        ])), 19),
+                    ]))),
+                ])), 19),
+            ])), 19),
+        ])
+
+        root, stats = rr.apply_raster_replacements(
+            root,
+            {"rf_stack": [
+                {
+                    "url": "/Universal SPP Raster rf_stack_base?version=abc.image",
+                    "kind": "full_stack_channel",
+                    "material_index": 0,
+                    "stack_index": 0,
+                    "channel_index": 0,
+                },
+                {
+                    "url": "/Universal SPP Raster rf_stack_height?version=def.image",
+                    "kind": "full_stack_channel",
+                    "material_index": 0,
+                    "stack_index": 0,
+                    "channel_index": 1,
+                },
+            ]},
+            requests=[{"id": "rf_stack", "scope": "full_stack_channel", "stack_uid": 900}],
+        )
+
+        self.assertEqual(stats["full_stacks_replaced"], 1)
+        material = root[1][0][2][1][1][0][1]
+        stack_obj = get_field(material, "stacks")[2][1][1][0][1]
+        layer_stack = get_field(stack_obj, "stack")[2][1]
+        items = get_field(layer_stack, "items")[2][1][1]
+        self.assertEqual(len(items), 1)
+        raster_layer = items[0][1]
+        self.assertEqual(raster_layer[0], "DataLayerColor")
+        fill = get_field(get_field(raster_layer, "actions")[2][1], "items")[2][1][1][0][1]
+        self.assertEqual(fill[0], "DataActionFill")
+        self.assertEqual(int_field(fill, "channelTypes"), 3)
+
     def test_legacy_channel_name_mapping_is_conservative(self):
         root = obj("DataLayerColor", [
             field("uid", prim(12, 42), 12),

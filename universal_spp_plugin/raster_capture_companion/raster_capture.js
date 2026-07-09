@@ -83,9 +83,40 @@ function _save(selector, filename, config) {
   alg.mapexport.save(selector, filename, config)
 }
 
+function _pathIndexAfter(req, marker) {
+  var path = req.path || []
+  for (var i = 0; i < path.length - 1; ++i) {
+    if (path[i] === marker) {
+      var m = String(path[i + 1]).match(/^\[(\d+)\]$/)
+      if (m) {
+        return parseInt(m[1], 10)
+      }
+    }
+  }
+  return null
+}
+
+function _requestIndex(req, field, marker) {
+  if (req[field] !== undefined && req[field] !== null) {
+    var direct = parseInt(req[field], 10)
+    if (!isNaN(direct)) {
+      return direct
+    }
+  }
+  return _pathIndexAfter(req, marker)
+}
+
 function _captureStackChannels(req, index, outDir, assets) {
+  var materialIndex = _requestIndex(req, "material_index", "DataDocument.materials")
+  var stackIndex = _requestIndex(req, "stack_index", "DataMaterial.stacks")
   for (var s = 0; s < index.stacks.length; ++s) {
     var stack = index.stacks[s]
+    if (materialIndex !== null && stack.material_index !== materialIndex) {
+      continue
+    }
+    if (stackIndex !== null && stack.stack_index !== stackIndex) {
+      continue
+    }
     for (var c = 0; c < stack.channels.length; ++c) {
       var channel = stack.channels[c]
       var name = _safe(req.id + "_" + stack.material + "_" + stack.stack + "_" + channel + ".png")

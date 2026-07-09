@@ -665,6 +665,7 @@ class SPPBuilder:
                             "mask_stacks_replaced",
                             "sources_replaced",
                             "content_actions_replaced",
+                            "full_stacks_replaced",
                         )):
                             parts = []
                             if raster_stats.get("mask_stacks_replaced"):
@@ -673,6 +674,8 @@ class SPPBuilder:
                                 parts.append(f"sources={raster_stats['sources_replaced']}")
                             if raster_stats.get("content_actions_replaced"):
                                 parts.append(f"actions={raster_stats['content_actions_replaced']}")
+                            if raster_stats.get("full_stacks_replaced"):
+                                parts.append(f"full_stacks={raster_stats['full_stacks_replaced']}")
                             self.log("  Raster replacements applied: " + ", ".join(parts))
                         self.log("  Transcoded HBO (v11 -> v10)")
                     except Exception as e:

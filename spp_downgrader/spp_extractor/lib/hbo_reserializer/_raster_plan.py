@@ -90,12 +90,14 @@ class RasterRequest:
     __slots__ = (
         "id", "dataset", "target", "scope", "kind", "object_type", "reason",
         "path", "layer_uid", "stack_uid", "object_uid", "label",
-        "capture", "preserves_editability", "visual_confidence",
+        "material_index", "stack_index", "capture",
+        "preserves_editability", "visual_confidence",
     )
 
     def __init__(self, *, dataset=None, target=None, scope=None, kind=None,
                  object_type=None, reason="", path=(), layer_uid=None,
-                 stack_uid=None, object_uid=None, label=None, capture=None,
+                 stack_uid=None, object_uid=None, label=None,
+                 material_index=None, stack_index=None, capture=None,
                  preserves_editability="partial", visual_confidence="exact"):
         self.dataset = dataset
         self.target = target
@@ -108,6 +110,8 @@ class RasterRequest:
         self.stack_uid = stack_uid
         self.object_uid = object_uid
         self.label = label
+        self.material_index = material_index
+        self.stack_index = stack_index
         self.capture = capture or {}
         self.preserves_editability = preserves_editability
         self.visual_confidence = visual_confidence
@@ -148,6 +152,8 @@ class RasterRequest:
             "stack_uid": self.stack_uid,
             "object_uid": self.object_uid,
             "label": self.label,
+            "material_index": self.material_index,
+            "stack_index": self.stack_index,
             "capture": self.capture,
             "preserves_editability": self.preserves_editability,
             "visual_confidence": self.visual_confidence,
@@ -175,6 +181,8 @@ class RasterPlanner:
             "stack_uid": None,
             "in_fill_sources": False,
             "group_uid": None,
+            "material_index": None,
+            "stack_index": None,
         })
         return [r.to_dict() for r in self.requests]
 
@@ -231,6 +239,8 @@ class RasterPlanner:
             stack_uid=ctx.get("stack_uid"),
             object_uid=_object_uid(obj),
             label=_label(obj),
+            material_index=ctx.get("material_index"),
+            stack_index=ctx.get("stack_index"),
             capture=self._capture_for(scope, kind, ctx),
             preserves_editability=("low" if scope in (S_GROUP, S_FULL_STACK_CHANNEL) else "partial"),
             visual_confidence="exact",
@@ -291,6 +301,11 @@ class RasterPlanner:
                     if elem and elem[0] == "object" and isinstance(elem[1], tuple):
                         nctx = dict(ctx)
                         nctx["path"] = tuple(list(ctx.get("path") or ()) + [f"[{i}]"])
+                        if ctx.get("path") and ctx["path"][-1] == "DataDocument.materials":
+                            nctx["material_index"] = i
+                            nctx["stack_index"] = None
+                        elif ctx.get("path") and ctx["path"][-1] == "DataMaterial.stacks":
+                            nctx["stack_index"] = i
                         self._visit_obj(elem[1], nctx)
 
 
