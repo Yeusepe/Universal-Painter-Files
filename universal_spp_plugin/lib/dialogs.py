@@ -38,6 +38,12 @@ def save_uspp(suggested=""):
     return path or None
 
 
+def save_spp(suggested=""):
+    QtWidgets = _qt()
+    path, _ = QtWidgets.QFileDialog.getSaveFileName(_parent(), "Save Project", suggested, "Substance Painter (*.spp)")
+    return path or None
+
+
 def error(message, title="Universal SPP"):
     QtWidgets = _qt()
     QtWidgets.QMessageBox.critical(_parent(), title, message)

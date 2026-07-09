@@ -81,7 +81,11 @@ the project already has a real file path.
 When you pick a regular `.spp`, the plugin first packs it into a temporary
 `.uspp`. The plugin then detects the running Painter version, asks the converter
 for a plan, and builds a temporary `.spp` in the system temp directory under
-`USPPCache`. The source `.uspp` or `.spp` is not modified.
+`USPPCache`. Before opening that generated copy, the plugin asks where to save
+the opened `.spp`, using a source-based name such as
+`MyProject - Universal v10.spp`. Painter then opens that real user-chosen path,
+so `Ctrl+S`, File > Save, and close prompts do not save back into the temp cache.
+The source `.uspp` or `.spp` is not modified.
 
 If the `.uspp` was authored in an older version than the one you are running,
 the converter rebuilds the stored project and lets Painter perform its normal
@@ -147,7 +151,10 @@ work:
    uspp_tool.exe build --uspp <file.uspp> --target <running-version> -o <temp.spp>
    ```
 
-8. Open the temporary `.spp` with `substance_painter.project.open()`.
+8. Ask where to save the opened `.spp` copy.
+9. Copy the temporary build to that user-chosen path.
+10. Open the saved copy with `substance_painter.project.open()`.
+11. Mark the opened copy as needing save so Painter prompts before closing it.
 
 If Painter refuses to open because another dirty project is loaded, the plugin
 asks before closing the current project and retrying.

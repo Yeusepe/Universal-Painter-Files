@@ -8,10 +8,15 @@ Install: drop this folder into  Documents/Adobe/Adobe Substance 3D Painter/pytho
 Requires bin/uspp_tool.exe beside this file (the bundled converter).
 """
 import os
+import json
+import re
+import shutil
 import time
 import tempfile
 import traceback
 import contextlib
+import uuid
+import zipfile
 
 import substance_painter.ui as sp_ui
 import substance_painter.project as sp_project
@@ -36,6 +41,8 @@ _handled_launch = False   # open the launch-arg .uspp once per session, not on e
 _operation_active = False
 _update_check_running = False
 _CACHE = os.path.join(tempfile.gettempdir(), "USPPCache")
+_TEMP_OPEN_MARK_CONTEXT = "UniversalSPP"
+_FILENAME_SAFE_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
 
 
 def _parent():
@@ -68,25 +75,156 @@ def _prune_cache(max_age_days=7):
         if not os.path.isdir(_CACHE):
             return
         cutoff = time.time() - max_age_days * 86400
-        for f in os.listdir(_CACHE):
-            p = os.path.join(_CACHE, f)
-            if os.path.isfile(p) and os.path.getmtime(p) < cutoff:
+        for name in os.listdir(_CACHE):
+            p = os.path.join(_CACHE, name)
+            if os.path.getmtime(p) < cutoff:
                 try:
-                    os.remove(p)
+                    if os.path.isdir(p):
+                        shutil.rmtree(p)
+                    else:
+                        os.remove(p)
                 except OSError:
                     pass
     except Exception:
         pass
 
 
-def _temp_spp():
-    os.makedirs(_CACHE, exist_ok=True)
-    return os.path.join(_CACHE, f"uspp_{int(time.time())}.spp")
+def _path_stem(path):
+    text = str(path or "").replace("\\", "/")
+    base = text.rsplit("/", 1)[-1]
+    stem, _ext = os.path.splitext(base)
+    return stem
 
 
-def _temp_uspp():
+def _safe_project_stem(path):
+    stem = _path_stem(path).strip() or "Universal Project"
+    stem = _FILENAME_SAFE_RE.sub(" ", stem)
+    stem = re.sub(r"\s+", " ", stem).strip(" .")
+    return (stem or "Universal Project")[:80]
+
+
+def _read_uspp_source_file(uspp):
+    try:
+        with zipfile.ZipFile(uspp) as zf:
+            manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+        return manifest.get("source_file") or None
+    except Exception:
+        return None
+
+
+def _representative_source_path(src, uspp):
+    if src.lower().endswith(".spp"):
+        return src
+    return _read_uspp_source_file(uspp) or src
+
+
+def _temp_named_path(source_path, filename):
     os.makedirs(_CACHE, exist_ok=True)
-    return os.path.join(_CACHE, f"uspp_{int(time.time())}.uspp")
+    stem = _safe_project_stem(source_path)
+    folder = os.path.join(_CACHE, f"open_{uuid.uuid4().hex}")
+    os.makedirs(folder, exist_ok=True)
+    return os.path.join(folder, filename(stem))
+
+
+def _temp_spp(source_path, target):
+    def filename(stem):
+        version = f" v{target}" if target else ""
+        return f"{stem} - Universal{version}.spp"
+
+    return _temp_named_path(source_path, filename)
+
+
+def _temp_uspp(source_path):
+    return _temp_named_path(source_path, lambda stem: f"{stem} - Universal Package.uspp")
+
+
+def _mark_opened_copy_dirty(source_path, target):
+    """Best-effort: make the converted temp project behave like an unsaved copy."""
+    try:
+        metadata_cls = getattr(sp_project, "Metadata", None)
+        if metadata_cls is None:
+            return False
+        metadata = metadata_cls(_TEMP_OPEN_MARK_CONTEXT)
+        stamp = f"{_safe_project_stem(source_path)}|v{target}|{uuid.uuid4().hex}"
+        metadata.set("opened_copy", stamp)
+        return True
+    except Exception as e:
+        _log(f"opened-copy save marker skipped: {e}")
+        return False
+
+
+def _mark_opened_copy_dirty_soon(source_path, target):
+    if _mark_opened_copy_dirty(source_path, target):
+        return
+
+    def retry():
+        _mark_opened_copy_dirty(source_path, target)
+
+    try:
+        execute_when_not_busy = getattr(sp_project, "execute_when_not_busy", None)
+        if execute_when_not_busy:
+            execute_when_not_busy(retry)
+        else:
+            QtCore.QTimer.singleShot(250, retry)
+    except Exception as e:
+        _log(f"opened-copy save marker retry skipped: {e}")
+
+
+def _suggest_opened_spp_path(source, opened_from, target):
+    folder = None
+    for candidate in (opened_from, source):
+        if candidate:
+            candidate_dir = os.path.dirname(os.path.abspath(candidate))
+            if os.path.isdir(candidate_dir):
+                folder = candidate_dir
+                break
+    if folder is None:
+        folder = os.path.expanduser("~/Documents")
+    version = f" v{target}" if target else ""
+    filename = f"{_safe_project_stem(source)} - Universal{version}.spp"
+    return os.path.join(folder, filename)
+
+
+def _same_path(a, b):
+    if not a or not b:
+        return False
+    return os.path.normcase(os.path.abspath(str(a))) == os.path.normcase(os.path.abspath(str(b)))
+
+
+def _is_original_spp_path(path, source, opened_from):
+    if not path.lower().endswith(".spp"):
+        return False
+    return any(
+        candidate and candidate.lower().endswith(".spp") and _same_path(path, candidate)
+        for candidate in (source, opened_from)
+    )
+
+
+def _choose_opened_spp_path(source, opened_from, target):
+    suggested = _suggest_opened_spp_path(source, opened_from, target)
+    while True:
+        out = dialogs.save_spp(suggested)
+        if not out:
+            return None
+        if not out.lower().endswith(".spp"):
+            out += ".spp"
+        if _is_original_spp_path(out, source, opened_from):
+            dialogs.error("Choose a new file name for the opened copy.\nThe original project will not be overwritten.")
+            suggested = _suggest_opened_spp_path(source, opened_from, target)
+            continue
+        return out
+
+
+def _copy_to_open_destination(temp_spp, source, opened_from, target):
+    out = _choose_opened_spp_path(source, opened_from, target)
+    if not out:
+        return None
+    try:
+        shutil.copy2(temp_spp, out)
+    except Exception as e:
+        dialogs.error(f"Could not save the converted project.\n{e}")
+        return None
+    return out
 
 
 # ------------------------------------------------------- double-click (launch argument)
@@ -149,7 +287,8 @@ def _open_path(src):
                 dialogs.error("Converter not found.\nExpected bin/uspp_tool.exe beside the plugin.")
                 return
             if src.lower().endswith(".spp"):
-                uspp = _temp_uspp()
+                source_for_name = src
+                uspp = _temp_uspp(source_for_name)
                 argv, env = runner.pack_args(src, uspp)
                 ok, err = progress.run_with_progress(_parent(), "Reading project", argv, env)
                 if not ok:
@@ -157,6 +296,7 @@ def _open_path(src):
                     return
             else:
                 uspp = src
+                source_for_name = _representative_source_path(src, uspp)
             target = version.detect_running()
             if not target:
                 dialogs.error("Could not detect the running Painter version.")
@@ -178,13 +318,16 @@ def _open_path(src):
                     "Substance Painter will upgrade it to your version on open."
                 )
 
-            out = _temp_spp()
+            temp_out = _temp_spp(source_for_name, target)
             target_binary = version.running_binary()
             _log(f"open: target=v{target}  binary={target_binary}")
-            argv, env = runner.build_args(uspp, target, out, target_binary=target_binary)
+            argv, env = runner.build_args(uspp, target, temp_out, target_binary=target_binary)
             ok, err = progress.run_with_progress(_parent(), f"Converting project to v{target}", argv, env)
             if not ok:
                 dialogs.error(f"Conversion failed.\n{err}")
+                return
+            out = _copy_to_open_destination(temp_out, source_for_name, src, target)
+            if not out:
                 return
             # Don't pre-check is_open() (some builds report the empty/home state as open).
             # Just open; if a project is genuinely loaded, Painter refuses -> close & retry.
@@ -204,6 +347,7 @@ def _open_path(src):
                 except Exception:
                     pass
                 sp_project.open(out)
+            _mark_opened_copy_dirty_soon(source_for_name, target)
             _log(f"opened {uspp} as v{target}")
         except Exception as e:
             _log("on_open error: " + traceback.format_exc())
