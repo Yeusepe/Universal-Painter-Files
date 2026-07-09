@@ -241,6 +241,8 @@ class SPPBuilder:
         for path, info in datasets_info.items():
             if not info.get("is_hbo"):
                 continue
+            if path not in ("paint/document.bin", "paint/default_material.bin"):
+                continue
             data_file = info.get("data_file")
             if not data_file:
                 continue
@@ -665,6 +667,7 @@ class SPPBuilder:
                             "mask_stacks_replaced",
                             "sources_replaced",
                             "content_actions_replaced",
+                            "layers_replaced",
                             "full_stacks_replaced",
                         )):
                             parts = []
@@ -674,6 +677,8 @@ class SPPBuilder:
                                 parts.append(f"sources={raster_stats['sources_replaced']}")
                             if raster_stats.get("content_actions_replaced"):
                                 parts.append(f"actions={raster_stats['content_actions_replaced']}")
+                            if raster_stats.get("layers_replaced"):
+                                parts.append(f"layers={raster_stats['layers_replaced']}")
                             if raster_stats.get("full_stacks_replaced"):
                                 parts.append(f"full_stacks={raster_stats['full_stacks_replaced']}")
                             self.log("  Raster replacements applied: " + ", ".join(parts))

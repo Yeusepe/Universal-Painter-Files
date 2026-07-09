@@ -238,6 +238,43 @@ class RasterReplaceTests(unittest.TestCase):
         self.assertEqual(fill[0], "DataActionFill")
         self.assertEqual(int_field(fill, "channelTypes"), 1)
 
+    def test_layer_replacement_keeps_mask_stack_and_replaces_actions(self):
+        root = channel_doc(0)
+        original_mask = oval(obj("DataStackActions", [
+            field("uid", prim(12, 200), 12),
+            field("items", ("array", ("object", [])), 19),
+        ]))
+        root[1][1] = field("layers", arr(obj("DataLayerColor", [
+            field("uid", prim(12, 42), 12),
+            field("actions", oval(obj("DataStackActions", [
+                field("uid", prim(12, 100), 12),
+                field("items", arr(obj("DataActionGeneratorFancy", [
+                    field("uid", prim(12, 101), 12),
+                ])), 19),
+            ]))),
+            field("maskActions", original_mask),
+        ])), 19)
+
+        root, stats = rr.apply_raster_replacements(
+            root,
+            {"rf_layer": [{
+                "url": "/Universal SPP Raster rf_layer?version=abc.image",
+                "kind": "content",
+                "material_index": 0,
+                "stack_index": 0,
+                "channel_index": 0,
+            }]},
+            requests=[{"id": "rf_layer", "scope": "layer", "layer_uid": 42, "object_uid": 42}],
+        )
+
+        self.assertEqual(stats["layers_replaced"], 1)
+        layer = root[1][1][2][1][1][0][1]
+        self.assertIs(get_field(layer, "maskActions")[2], original_mask)
+        action_stack = get_field(layer, "actions")[2][1]
+        fill = get_field(action_stack, "items")[2][1][1][0][1]
+        self.assertEqual(fill[0], "DataActionFill")
+        self.assertEqual(int_field(fill, "channelTypes"), 1)
+
     def test_full_stack_replacement_flattens_stack_to_raster_layer(self):
         root = obj("DataDocument", [
             field("materials", arr(obj("DataMaterial", [

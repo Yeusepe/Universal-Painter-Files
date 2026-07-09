@@ -13,6 +13,7 @@ from ._raster_plan import (
     S_MASK_STACK,
     S_FULL_STACK_CHANNEL,
     S_SOURCE,
+    S_LAYER,
     collect_raster_requests,
 )
 
@@ -266,21 +267,28 @@ def _bitmap_fill_stack(url, uid_gen):
     return ("object", stack)
 
 
+def _raster_action_stack(entries, channel_lookup, uid_gen, label):
+    fill, skipped = _bitmap_fill_action(entries, channel_lookup, uid_gen, label)
+    if not fill:
+        return None, skipped
+    stack = ("DataStackActions", [
+        ("uid", 12, _p_i64(uid_gen.next())),
+        ("items", 19, ("array", ("object", [("object", fill)]))),
+    ])
+    return ("object", stack), skipped
+
+
 def _raster_layer_stack(entries, channel_lookup, uid_gen):
-    fill, skipped = _bitmap_fill_action(
+    actions_value, skipped = _raster_action_stack(
         entries,
         channel_lookup,
         uid_gen,
         "Universal SPP raster full stack",
     )
-    if not fill:
+    if not actions_value:
         return None, skipped
-    actions = ("DataStackActions", [
-        ("uid", 12, _p_i64(uid_gen.next())),
-        ("items", 19, ("array", ("object", [("object", fill)]))),
-    ])
     layer = ("DataLayerColor", [
-        ("actions", 18, ("object", actions)),
+        ("actions", 18, actions_value),
         ("colorTag", 9, _p_i32(0)),
         ("enabled", 10, _p_bool(True)),
         ("enabledGeometryMask", 10, _p_bool(True)),
@@ -319,6 +327,7 @@ def _replacement_maps(root, replacements, dataset, target, requests=None):
     mask_urls = {}
     source_entries = {}
     action_entries = {}
+    layer_entries = {}
     full_stack_entries = {}
     for req in requests:
         entries = replacements.get(req.get("id")) or []
@@ -331,9 +340,15 @@ def _replacement_maps(root, replacements, dataset, target, requests=None):
             source_entries[int(req["object_uid"])] = entries
         elif scope in (S_CONTENT_ACTION, S_GROUP) and req.get("object_uid") is not None and entries:
             action_entries[int(req["object_uid"])] = entries
+        elif scope == S_LAYER and entries:
+            layer_uid = req.get("layer_uid")
+            object_uid = req.get("object_uid")
+            uid = layer_uid if layer_uid is not None else object_uid
+            if uid is not None:
+                layer_entries[int(uid)] = entries
         elif scope == S_FULL_STACK_CHANNEL and req.get("stack_uid") is not None and entries:
             full_stack_entries[int(req["stack_uid"])] = entries
-    return mask_urls, source_entries, action_entries, full_stack_entries
+    return mask_urls, source_entries, action_entries, layer_entries, full_stack_entries
 
 
 def _empty_stats():
@@ -341,9 +356,11 @@ def _empty_stats():
         "mask_stacks_replaced": 0,
         "sources_replaced": 0,
         "content_actions_replaced": 0,
+        "layers_replaced": 0,
         "full_stacks_replaced": 0,
         "source_replacements_skipped": 0,
         "content_actions_skipped": 0,
+        "layers_skipped": 0,
         "full_stacks_skipped": 0,
         "channel_assets_skipped": 0,
     }
@@ -354,14 +371,14 @@ def apply_raster_replacements(root, replacements, *, dataset=None, target=None, 
     if not replacements:
         return root, stats
 
-    mask_urls, source_entries, action_entries, full_stack_entries = _replacement_maps(
+    mask_urls, source_entries, action_entries, layer_entries, full_stack_entries = _replacement_maps(
         root,
         replacements,
         dataset,
         target,
         requests=requests,
     )
-    if not (mask_urls or source_entries or action_entries or full_stack_entries):
+    if not (mask_urls or source_entries or action_entries or layer_entries or full_stack_entries):
         return root, stats
 
     channel_lookup = _channel_mask_lookup(root)
@@ -447,6 +464,30 @@ def apply_raster_replacements(root, replacements, *, dataset=None, target=None, 
                 tcode = existing[1] if existing else 18
                 _set_field(fields, "maskActions", tcode, _bitmap_fill_stack(url, uid_gen))
                 stats["mask_stacks_replaced"] += 1
+            entries = layer_entries.get(uid)
+            if entries and obj_name == "DataLayerColor":
+                actions_value, skipped = _raster_action_stack(
+                    entries,
+                    channel_lookup,
+                    uid_gen,
+                    "Universal SPP raster layer",
+                )
+                stats["channel_assets_skipped"] += skipped
+                if actions_value:
+                    existing = _field(fields, "actions")
+                    _set_field(fields, "actions", existing[1] if existing else 18, actions_value)
+                    stats["layers_replaced"] += 1
+                else:
+                    stats["layers_skipped"] += 1
+            elif entries and obj_name == "DataLayerGroup":
+                stack_value, skipped = _raster_layer_stack(entries, channel_lookup, uid_gen)
+                stats["channel_assets_skipped"] += skipped
+                if stack_value:
+                    existing = _field(fields, "subStack")
+                    _set_field(fields, "subStack", existing[1] if existing else 18, stack_value)
+                    stats["layers_replaced"] += 1
+                else:
+                    stats["layers_skipped"] += 1
 
         if obj_name == "DataMaterialStack":
             stack_field = _field(fields, "stack")

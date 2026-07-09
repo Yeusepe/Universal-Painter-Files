@@ -138,6 +138,8 @@ def _bind_raster_target(s_label, t_label):
 
 
 def _hbo_raster_requests(raw, dataset_path, s_label, t_label):
+    if dataset_path not in ("paint/document.bin", "paint/default_material.bin"):
+        return []
     if len(raw) < 12 or struct.unpack("<I", raw[:4])[0] != 0x1B7C2FDD:
         return []
     hr = _bind_raster_target(s_label, t_label)
