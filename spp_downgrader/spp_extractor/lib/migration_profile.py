@@ -261,7 +261,15 @@ def _discover_edges(profile_dir):
 def _major_baseline_profile(major, profile_dir=None):
     profile_dir = profile_dir or os.environ.get("SPP_PROFILE_DIR", _DEFAULT_PROFILE_DIR)
     edges = _discover_edges(profile_dir)
-    target = str(major)
+    requested = str(major)
+    requested_key = _vkey(requested)
+    requested_major = requested_key[0] if requested_key else None
+    targets = sorted({to for tos in edges.values() for to in tos}, key=_vkey)
+    if requested in targets:
+        target = requested
+    else:
+        fits = [t for t in targets if requested_major is not None and _vkey(t)[0] == requested_major]
+        target = max(fits, key=_vkey) if fits else requested
     sources = sorted((frm for frm, tos in edges.items() if target in tos), key=_vkey)
     if not sources:
         return None
@@ -359,8 +367,12 @@ def load(name=None):
     snapped = _snap_target(to, edges)
     path = _find_path(edges, snapped_from, snapped)
     if not path:
-        if _vkey(frm)[0] == _vkey(to)[0] and _vkey(frm) > _vkey(to):
-            baseline = _major_baseline_profile(_vkey(to)[0], profile_dir)
+        if path == [] and snapped_from == snapped and _vkey(frm)[0] == _vkey(to)[0] and _vkey(frm) > _vkey(to):
+            baseline = _major_baseline_profile(to, profile_dir)
+            if baseline is not None:
+                return baseline
+        if path is None and _vkey(frm)[0] == _vkey(to)[0] and _vkey(frm) > _vkey(to):
+            baseline = _major_baseline_profile(to, profile_dir)
             if baseline is not None:
                 return baseline
         return _load_one(name, profile_dir)         # no chain -> clear error

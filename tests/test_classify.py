@@ -152,6 +152,11 @@ class IntroductionMapTests(unittest.TestCase):
         self.assertTrue(self.mp.above_floor("12", "8.1"))
         self.assertFalse(self.mp.above_floor("8.1", "8.1"))
 
+    def test_same_major_minor_downgrade_uses_dotted_baseline_profile(self):
+        prof = self.mp.load("v8.3_to_v8.1")
+        self.assertIn("BakingCommonParameters", prof.blacklist)
+        self.assertEqual(self.mp._major_baseline_profile(8, self.dir).blacklist, prof.blacklist)
+
 
 if __name__ == "__main__":
     unittest.main()
