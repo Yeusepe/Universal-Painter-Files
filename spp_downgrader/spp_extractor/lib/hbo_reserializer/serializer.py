@@ -113,6 +113,7 @@ class HBOSerializer(HelperMixin, ReaderMixin, InlineWriterMixin, RegistryWriterM
         self.identifier_blacklist = set()
         self.value_rewrites = {}
         self.raster_replacements = {}
+        self.raster_requests = []
         self.raster_dataset_path = None
         self.raster_target_label = None
         self.raster_stats = {}
@@ -157,10 +158,11 @@ class HBOSerializer(HelperMixin, ReaderMixin, InlineWriterMixin, RegistryWriterM
                 self.raster_replacements,
                 dataset=self.raster_dataset_path,
                 target=self.raster_target_label,
+                requests=self.raster_requests,
             )
             self.raster_stats = stats
-        except Exception:
-            self.raster_stats = {"mask_stacks_replaced": 0}
+        except Exception as e:
+            self.raster_stats = {"mask_stacks_replaced": 0, "error": str(e)}
         return root
 
     def _transcode_v11_registry(self, blacklist, data_version=None, max_array_items=None):
@@ -311,7 +313,7 @@ class HBOSerializer(HelperMixin, ReaderMixin, InlineWriterMixin, RegistryWriterM
 
         return self._patch_v10_root_length(dst.getvalue())
 
-    def prune_and_reserialize(self, blacklist, data_version=None, max_array_items=None, overrides=None, identifier_blacklist=None, value_rewrites=None, force_entry_headers=False, raster_replacements=None, dataset_path=None, target_label=None):
+    def prune_and_reserialize(self, blacklist, data_version=None, max_array_items=None, overrides=None, identifier_blacklist=None, value_rewrites=None, force_entry_headers=False, raster_replacements=None, raster_requests=None, dataset_path=None, target_label=None):
         # We must output v10 Tagged format
         dst = io.BytesIO()
         header_version = 17 if data_version is None else int(data_version)
@@ -320,6 +322,7 @@ class HBOSerializer(HelperMixin, ReaderMixin, InlineWriterMixin, RegistryWriterM
         self.identifier_blacklist = set(identifier_blacklist or [])
         self.value_rewrites = value_rewrites or {}
         self.raster_replacements = raster_replacements or {}
+        self.raster_requests = list(raster_requests or [])
         self.raster_dataset_path = dataset_path
         self.raster_target_label = target_label
         self.raster_stats = {}

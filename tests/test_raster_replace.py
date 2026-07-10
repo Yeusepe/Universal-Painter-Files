@@ -1,4 +1,5 @@
 import sys
+import struct
 from pathlib import Path
 import unittest
 
@@ -62,6 +63,31 @@ def int_field(o, name):
 
 
 class RasterReplaceTests(unittest.TestCase):
+    def test_capture_channel_names_override_mapexport_array_indexes(self):
+        lookup = {(0, 0, 0): 1}
+
+        roughness = rr._entry_channel_mask({
+            "channel": "roughness",
+            "material_index": 0,
+            "stack_index": 0,
+            "channel_index": 0,
+        }, lookup)
+        metallic = rr._entry_channel_mask({"channel": "metallic"}, {})
+        user0 = rr._entry_channel_mask({"channel": "user0"}, {})
+        user5 = rr._entry_channel_mask({"channel": "user5"}, {})
+
+        self.assertEqual(roughness, 1 << 7)
+        self.assertEqual(metallic, 1 << 13)
+        self.assertEqual(user0, 1 << 14)
+        self.assertEqual(user5, 1 << 19)
+
+    def test_primitive_int_reads_full_v12_channel_mask(self):
+        value = 1 << 69
+        self.assertEqual(
+            rr._primitive_int(("primitive", 22, value.to_bytes(16, "little"))),
+            value,
+        )
+
     def test_mask_stack_replacement_uses_prepared_url(self):
         root = obj("DataDocument", [
             field("layers", ("array", ("object", [
@@ -355,6 +381,88 @@ class RasterReplaceTests(unittest.TestCase):
         stack = get_field(root, "actions")[2][1]
         fill = get_field(stack, "items")[2][1][1][0][1]
         self.assertEqual(int_field(fill, "channelTypes"), 1)
+
+    def test_uv_tile_layer_replacement_builds_tile_scoped_children(self):
+        root = channel_doc(0)
+        original_mask = oval(obj("DataStackActions", [
+            field("uid", prim(12, 200), 12),
+            field("items", ("array", ("object", [])), 19),
+        ]))
+        root[1][1] = field("layers", arr(obj("DataLayerColor", [
+            field("uid", prim(12, 42), 12),
+            field("actions", oval(obj("DataStackActions", [
+                field("uid", prim(12, 100), 12),
+                field("items", ("array", ("object", [])), 19),
+            ]))),
+            field("maskActions", original_mask),
+        ])), 19)
+
+        root, stats = rr.apply_raster_replacements(
+            root,
+            {"rf_layer": [
+                {"url": "/tile1001", "kind": "content", "material_index": 0,
+                 "stack_index": 0, "channel_index": 0, "uv_tile": 1001},
+                {"url": "/tile1002", "kind": "content", "material_index": 0,
+                 "stack_index": 0, "channel_index": 0, "uv_tile": 1002},
+            ]},
+            requests=[{"id": "rf_layer", "scope": "layer", "layer_uid": 42}],
+        )
+
+        self.assertEqual(stats["layers_replaced"], 1)
+        wrapper = root[1][1][2][1][1][0][1]
+        self.assertEqual(wrapper[0], "DataLayerGroup")
+        self.assertEqual(get_field(wrapper, "maskActions")[2], original_mask)
+        child_stack = get_field(wrapper, "subStack")[2][1]
+        children = get_field(child_stack, "items")[2][1][1]
+        self.assertEqual(len(children), 2)
+        coords = []
+        for child_value in children:
+            child = child_value[1]
+            self.assertEqual(int_field(child, "enabledUVTileDefault"), 0)
+            boxes = get_field(child, "enabledUVTileList")[2][1][1]
+            raw = get_field(boxes[0][1], "value")[2][2]
+            coords.append(struct.unpack("<ii", raw))
+        self.assertEqual(coords, [(0, 0), (1, 0)])
+
+    def test_uv_tile_mask_replacement_wraps_content_and_mask_per_tile(self):
+        root = channel_doc(0)
+        root[1][1] = field("layers", arr(obj("DataLayerColor", [
+            field("uid", prim(12, 42), 12),
+            field("actions", oval(obj("DataStackActions", [
+                field("uid", prim(12, 100), 12),
+                field("items", ("array", ("object", [])), 19),
+            ]))),
+            field("maskActions", oval(obj("DataStackActions", []))),
+        ])), 19)
+        assets = []
+        for uv_tile in (1001, 1002):
+            assets.extend([
+                {"url": f"/content{uv_tile}", "kind": "content", "material_index": 0,
+                 "stack_index": 0, "channel_index": 0, "uv_tile": uv_tile},
+                {"url": f"/mask{uv_tile}", "kind": "mask", "uv_tile": uv_tile},
+            ])
+
+        root, stats = rr.apply_raster_replacements(
+            root,
+            {"rf_mask": assets},
+            requests=[{"id": "rf_mask", "scope": "mask_stack", "layer_uid": 42}],
+        )
+
+        self.assertEqual(stats["mask_stacks_replaced"], 1)
+        wrapper = root[1][1][2][1][1][0][1]
+        self.assertEqual(wrapper[0], "DataLayerGroup")
+        self.assertEqual(get_field(wrapper, "maskActions")[2][0], "object_null")
+        children = get_field(get_field(wrapper, "subStack")[2][1], "items")[2][1][1]
+        self.assertEqual(len(children), 2)
+        mask_urls = []
+        for child_value in children:
+            child = child_value[1]
+            mask_stack = get_field(child, "maskActions")[2][1]
+            mask_fill = get_field(mask_stack, "items")[2][1][1][0][1]
+            mask_source = get_field(mask_fill, "sources")[2][1][1][0][1]
+            bitmap = get_field(mask_source, "bitmap")[2][1]
+            mask_urls.append(get_field(bitmap, "urlToBitmapRes")[2][1].decode("utf-8"))
+        self.assertEqual(mask_urls, ["/mask1001", "/mask1002"])
 
 
 if __name__ == "__main__":

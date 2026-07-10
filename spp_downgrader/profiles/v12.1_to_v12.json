@@ -39,7 +39,7 @@
   },
   "field_value_transform": {
     "DataChannel.type": {
-      "op": "enum_to_bitmask",
+      "op": "channel_enum_to_legacy_bitmask",
       "code": 21
     }
   },

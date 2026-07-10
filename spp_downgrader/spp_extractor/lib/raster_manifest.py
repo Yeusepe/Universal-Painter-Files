@@ -41,7 +41,9 @@ def asset_request_ids(manifest):
 
 
 def summarize(manifest, requests=None):
-    requests = list(requests or manifest.get("requests") or [])
+    if requests is None:
+        requests = manifest.get("requests") or []
+    requests = list(requests)
     have = asset_request_ids(manifest)
     missing = [r for r in requests if r.get("id") not in have]
     return {
@@ -104,11 +106,11 @@ def add_capture_dir_to_zip(zf, capture_dir, budget_bytes=DEFAULT_BUDGET_BYTES):
         if not p.exists():
             out["warnings"].append(f"missing raster asset: {p}")
             continue
+        sha = _sha256_file(p)
         size = os.path.getsize(p)
-        if total + size > budget_bytes:
+        if sha not in seen_hashes and total + size > budget_bytes:
             out["warnings"].append(f"raster budget exceeded; skipped {p.name}")
             continue
-        sha = _sha256_file(p)
         ext = p.suffix.lower() or ".png"
         arc = f"{ASSET_PREFIX}{sha}{ext}"
         if sha not in seen_hashes:

@@ -152,7 +152,22 @@ def run_with_progress(parent, title, argv, env_extra=None):
     timer.start(40)
 
     proc.start(argv[0], list(argv[1:]))
+    if not proc.waitForStarted(5000):
+        timer.stop()
+        out["err"] = proc.errorString() or "converter process could not start"
+        proc.deleteLater()
+        dlg.deleteLater()
+        return False, out["err"]
+
     (dlg.exec if hasattr(dlg, "exec") else dlg.exec_)()
+    # Some Painter/Qt menu paths can unwind the nested dialog loop before the
+    # child exits. Keep both QObject instances alive until `finished`; otherwise
+    # QProcess is deleted mid-conversion and the caller sees a false failure.
+    if proc.state() != QtCore.QProcess.NotRunning:
+        wait_loop = QtCore.QEventLoop()
+        proc.finished.connect(wait_loop.quit)
+        if proc.state() != QtCore.QProcess.NotRunning:
+            wait_loop.exec() if hasattr(wait_loop, "exec") else wait_loop.exec_()
     # Destroy promptly rather than leaving these parented to the main window until app
     # shutdown, where PySide teardown against the finalizing interpreter can crash.
     proc.deleteLater()

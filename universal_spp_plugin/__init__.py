@@ -32,7 +32,7 @@ except ImportError:
     _PYSIDE = 2
     _QAction = QtWidgets.QAction
 
-from .lib import runner, version, dialogs, progress, updater
+from .lib import runner, version, dialogs, progress, updater, legacy_uv_export
 
 _menu = None
 _actions = []   # strong refs so Qt doesn't garbage-collect the menu actions
@@ -253,7 +253,13 @@ def _capture_raster_js(plan_path, manifest_path):
         + "return {ok:true};\n"
         + "})()"
     )
-    return sp_js.evaluate(code)
+    executable = version.running_binary()
+    if not executable:
+        raise RuntimeError("Could not locate the running Painter executable for raster capture.")
+    with legacy_uv_export.temporary_guard_bypass(executable):
+        result = sp_js.evaluate(code)
+    legacy_uv_export.expand_manifest_uv_tiles(manifest_path)
+    return result
 
 
 def _run_capture_with_dialog(plan_path, manifest_path):

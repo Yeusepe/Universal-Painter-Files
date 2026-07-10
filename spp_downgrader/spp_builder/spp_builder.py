@@ -51,6 +51,18 @@ BINARY_MAGIC = 0x1B7C2FDD
 BINARY_MAGIC_V11 = 0x69000B11
 
 
+def _version_key(label):
+    parts = re.findall(r"\d+", str(label or ""))
+    return tuple(int(part) for part in (parts + ["0"])[:2]) if parts else None
+
+
+def _raster_request_applies_to_target(request, target_label):
+    """A capture planned for vN is also required by older additive targets."""
+    request_key = _version_key(request.get("target"))
+    target_key = _version_key(target_label)
+    return request_key is None or target_key is None or target_key <= request_key
+
+
 class SPPBuilder:
     """Build SPP (HDF5) files from extracted USPP data."""
 
@@ -72,16 +84,22 @@ class SPPBuilder:
         'paint/document.bin': 81,
     }
 
-    def __init__(self, verbose: bool = False, target_major: Optional[int] = None):
+    def __init__(self, verbose: bool = False, target_major: Optional[int] = None,
+                 preserve_source: bool = False):
         self.verbose = verbose
         self.errors: List[str] = []
         self.target_major = target_major
+        # Exact builds and forward-compatible opens must not infer a target from
+        # source metadata. Doing so turns an already-v8 project into a second
+        # v8 downgrade and can restamp its HBO streams with a newer data version.
+        self.preserve_source = bool(preserve_source)
         self._downgrade_config = None
         # Fast mode: minimal output compression for throwaway temp files (plugin "Open").
         self.fast = bool(os.environ.get("SPP_FAST"))
         self._prepared_raster_resources = []
         self._raster_replacements = {}
         self._raster_required_ids = set()
+        self._raster_requests = []
         # Apply migration profile overrides for dataset renames and data versions.
         self.V10_DATASET_RENAMES = PROFILE.dataset_renames or self.V10_DATASET_RENAMES
         self.V10_DATA_VERSION_MAP = PROFILE.data_version_map or self.V10_DATA_VERSION_MAP
@@ -180,7 +198,7 @@ class SPPBuilder:
                     source_major = metadata.get('painter_version', {}).get('major')
                 except Exception:
                     source_major = None
-                if self.target_major is None:
+                if self.target_major is None and not self.preserve_source:
                     self.target_major = source_major
                 if self.target_major:
                     self.log(f"Target version: {self.target_major}")
@@ -238,7 +256,7 @@ class SPPBuilder:
         except Exception:
             return
         target_label = os.environ.get("SPP_TARGET_VERSION") or (str(self.target_major) if self.target_major else None)
-        requests = []
+        live_requests = []
         for path, info in datasets_info.items():
             if not info.get("is_hbo"):
                 continue
@@ -249,11 +267,29 @@ class SPPBuilder:
                 continue
             try:
                 raw = zf.read(data_file)
-                requests.extend(HBOSerializer(raw).raster_plan(dataset_path=path, target_label=target_label))
-            except Exception:
+                live_requests.extend(HBOSerializer(raw).raster_plan(dataset_path=path, target_label=target_label))
+            except Exception as e:
+                self.log(f"  Raster planning failed for {path}: {e}")
                 continue
+        raster_manifest = load_from_zip(zf)
+        captured_requests = [
+            request for request in (raster_manifest.get("requests") or [])
+            if _raster_request_applies_to_target(request, target_label)
+        ]
+        requests_by_id = {
+            request.get("id"): request for request in captured_requests if request.get("id")
+        }
+        requests_by_id.update({
+            request.get("id"): request for request in live_requests if request.get("id")
+        })
+        requests = list(requests_by_id.values())
+        self._raster_requests = requests
         self._raster_required_ids = {r.get("id") for r in requests if r.get("id")}
-        summary = summarize(load_from_zip(zf), requests)
+        self.log(
+            f"  Raster planner identified {len(requests)} required fallback request(s) "
+            f"({len(live_requests)} live, {len(captured_requests)} captured)"
+        )
+        summary = summarize(raster_manifest, requests)
         if summary.get("raster_required"):
             missing = summary.get("missing_raster_fallbacks") or []
             if missing:
@@ -267,7 +303,8 @@ class SPPBuilder:
         try:
             from lib.raster_manifest import load_from_zip
             from raster_resources import RasterResourceError, prepare_png_resource
-        except Exception:
+        except Exception as e:
+            self.log(f"  Raster resource encoder unavailable: {e}")
             return
         self._prepared_raster_resources = []
         self._raster_replacements = {}
@@ -281,6 +318,7 @@ class SPPBuilder:
         if not assets:
             return
         skipped = 0
+        prepared_by_archive = {}
         for asset in assets:
             arc = asset.get("archive_path")
             if not arc:
@@ -292,11 +330,16 @@ class SPPBuilder:
                 self.log(f"  Raster asset skipped (not PNG): {arc}")
                 continue
             try:
-                png = zf.read(arc)
                 request_id = asset.get("request_id") or asset.get("sha256") or f"asset_{len(self._prepared_raster_resources)}"
-                prepared = prepare_png_resource(png, request_id)
-                prepared["asset"] = dict(asset)
-                prepared["request_id"] = request_id
+                prepared = prepared_by_archive.get(arc)
+                if prepared is None:
+                    png = zf.read(arc)
+                    resource_id = asset.get("sha256") or request_id
+                    prepared = prepare_png_resource(png, resource_id)
+                    prepared["asset"] = dict(asset)
+                    prepared["request_id"] = request_id
+                    prepared_by_archive[arc] = prepared
+                    self._prepared_raster_resources.append(prepared)
                 key = asset.get("request_id") or arc
                 self._raster_replacements.setdefault(key, []).append({
                     "url": prepared["url"],
@@ -308,9 +351,9 @@ class SPPBuilder:
                     "stack": asset.get("stack"),
                     "stack_index": asset.get("stack_index"),
                     "kind": asset.get("kind"),
+                    "uv_tile": asset.get("uv_tile"),
                     "archive_path": arc,
                 })
-                self._prepared_raster_resources.append(prepared)
             except RasterResourceError as e:
                 skipped += 1
                 self.log(f"  Raster asset skipped: {arc} ({e})")
@@ -550,7 +593,8 @@ class SPPBuilder:
                 data_modified = True
 
         # Check if we have decoded data that needs re-encoding
-        if ds_info.get('is_hbo') and decoded_file in zf.namelist():
+        if (ds_info.get('is_hbo') and decoded_file in zf.namelist()
+                and (not self.preserve_source or raw_data is None)):
             try:
                 decoded = json.loads(zf.read(decoded_file))
 
@@ -665,11 +709,14 @@ class SPPBuilder:
                             target_data_version,
                             overrides=(None if _target_fmt == "registry" else overrides),
                             raster_replacements=getattr(self, "_raster_replacements", None),
+                            raster_requests=getattr(self, "_raster_requests", None),
                             dataset_path=path,
                             target_label=os.environ.get("SPP_TARGET_VERSION") or (str(self.target_major) if self.target_major else None),
                         )
                         data_modified = True
                         raster_stats = getattr(serializer, "raster_stats", {}) or {}
+                        if raster_stats.get("error"):
+                            self.log(f"  Raster replacement failed: {raster_stats['error']}")
                         if any(raster_stats.get(k) for k in (
                             "mask_stacks_replaced",
                             "sources_replaced",
@@ -1153,7 +1200,7 @@ def _m3_x64_128(data: bytes, seed: int = 0xF13A0239) -> tuple[int, int]:
 
 
 def build_spp(uspp_path: str, output_path: str, verbose: bool = False,
-              target_major: Optional[int] = None) -> bool:
+              target_major: Optional[int] = None, preserve_source: bool = False) -> bool:
     """
     Convenience function to build SPP from USPP.
 
@@ -1171,7 +1218,11 @@ def build_spp(uspp_path: str, output_path: str, verbose: bool = False,
     gc_was_enabled = gc.isenabled()
     gc.disable()
     try:
-        builder = SPPBuilder(verbose=verbose, target_major=target_major)
+        builder = SPPBuilder(
+            verbose=verbose,
+            target_major=target_major,
+            preserve_source=preserve_source,
+        )
         return builder.build_from_uspp(uspp_path, output_path)
     finally:
         if gc_was_enabled:

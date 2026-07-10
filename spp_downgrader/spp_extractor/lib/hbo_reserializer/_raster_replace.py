@@ -5,6 +5,7 @@ layer and replaces only `maskActions`; local content fallbacks replace either an
 unsupported source inside an existing fill action or one unsupported action/group
 inside a stack.
 """
+import copy
 import struct
 
 from ._raster_plan import (
@@ -18,21 +19,26 @@ from ._raster_plan import (
 )
 
 
-# Fallback for capture manifests produced before index metadata existed. Indexed
-# channel mapping is preferred because it comes directly from DataChannel.type.
-_CHANNEL_TYPE_BY_NAME = {
-    "basecolor": 0,
-    "basecolour": 0,
-    "base": 0,
-    "diffuse": 0,
-    "height": 1,
-    "metallic": 7,
-    "metalness": 7,
-    "roughness": 13,
-    "normal": 22,
-    "normalopengl": 22,
-    "normaldirectx": 22,
+# `mapexport` channel order is not the HBO DataChannel array order. Route by
+# semantic identifier first; these legacy masks were verified against a project
+# natively re-saved by Painter 8.3.
+_CHANNEL_MASK_BY_NAME = {
+    "basecolor": 1 << 0,
+    "basecolour": 1 << 0,
+    "base": 1 << 0,
+    "diffuse": 1 << 0,
+    "height": 1 << 1,
+    "roughness": 1 << 7,
+    "metallic": 1 << 13,
+    "metalness": 1 << 13,
+    "normal": 1 << 22,
+    "normalopengl": 1 << 22,
+    "normaldirectx": 1 << 22,
 }
+
+_SOURCE_USER_CHANNEL_START = 64
+_LEGACY_USER_CHANNEL_START = 14
+_LEGACY_USER_CHANNEL_COUNT = 8
 
 
 def _field(fields, name):
@@ -56,7 +62,7 @@ def _primitive_int(value):
     raw = value[2]
     if not raw:
         return None
-    return int.from_bytes(raw[:min(len(raw), 8)], "little", signed=False)
+    return int.from_bytes(raw, "little", signed=False)
 
 
 def _uid_of(obj):
@@ -129,6 +135,10 @@ def _p_float(value):
     return _prim(1, struct.pack("<f", float(value)))
 
 
+def _p_int2(u_value, v_value):
+    return _prim(6, struct.pack("<ii", int(u_value), int(v_value)))
+
+
 def _string(text):
     return ("string", str(text).encode("utf-8"))
 
@@ -147,8 +157,51 @@ def _entry_int(entry, key):
         return None
 
 
+def _uv_tile_coords(uv_tile):
+    uv_tile = _entry_int({"value": uv_tile}, "value")
+    if uv_tile is None or uv_tile < 1001:
+        return None
+    offset = uv_tile - 1001
+    return offset % 10, offset // 10
+
+
+def _entries_by_uv_tile(entries):
+    groups = {}
+    for entry in entries or []:
+        uv_tile = _entry_int(entry, "uv_tile")
+        groups.setdefault(uv_tile, []).append(entry)
+    return groups
+
+
+def _tile_box(uv_tile):
+    coords = _uv_tile_coords(uv_tile)
+    if coords is None:
+        return None
+    return ("object", ("DataInt2Box", [
+        ("value", 6, _p_int2(*coords)),
+    ]))
+
+
+def _set_tile_restriction(fields, uv_tile):
+    if uv_tile is None:
+        _set_field(fields, "enabledUVTileDefault", 10, _p_bool(True))
+        _set_field(fields, "enabledUVTileList", 17, ("array", ("object", [])))
+        return
+    box = _tile_box(uv_tile)
+    _set_field(fields, "enabledUVTileDefault", 10, _p_bool(False))
+    _set_field(fields, "enabledUVTileList", 17, ("array", ("object", [box])))
+
+
 def _mask_for_channel_type(channel_type):
-    if channel_type is None or channel_type < 0 or channel_type >= 63:
+    if channel_type is None or channel_type < 0:
+        return None
+    if _SOURCE_USER_CHANNEL_START <= channel_type < (
+        _SOURCE_USER_CHANNEL_START + _LEGACY_USER_CHANNEL_COUNT
+    ):
+        channel_type = (
+            channel_type - _SOURCE_USER_CHANNEL_START + _LEGACY_USER_CHANNEL_START
+        )
+    if channel_type >= 63:
         return None
     return 1 << int(channel_type)
 
@@ -181,6 +234,18 @@ def _channel_mask_lookup(root):
 
 
 def _entry_channel_mask(entry, channel_lookup):
+    channel_name = _channel_key(entry.get("channel"))
+    mask = _CHANNEL_MASK_BY_NAME.get(channel_name)
+    if mask is None and channel_name.startswith("user"):
+        try:
+            user_index = int(channel_name[4:])
+        except ValueError:
+            user_index = -1
+        if 0 <= user_index < _LEGACY_USER_CHANNEL_COUNT:
+            mask = 1 << (_LEGACY_USER_CHANNEL_START + user_index)
+    if mask is not None:
+        return mask
+
     channel_type = _entry_int(entry, "channel_type")
     mask = _mask_for_channel_type(channel_type)
     if mask is not None:
@@ -194,8 +259,7 @@ def _entry_channel_mask(entry, channel_lookup):
         if mask is not None:
             return mask
 
-    channel_name = _channel_key(entry.get("channel"))
-    return _mask_for_channel_type(_CHANNEL_TYPE_BY_NAME.get(channel_name))
+    return None
 
 
 def _bitmap_source(url, channel_mask, uid_gen):
@@ -278,38 +342,101 @@ def _raster_action_stack(entries, channel_lookup, uid_gen, label):
     return ("object", stack), skipped
 
 
-def _raster_layer_stack(entries, channel_lookup, uid_gen):
-    actions_value, skipped = _raster_action_stack(
-        entries,
-        channel_lookup,
-        uid_gen,
-        "Universal SPP raster full stack",
-    )
+def _empty_action_stack(uid_gen):
+    return ("object", ("DataStackActions", [
+        ("uid", 12, _p_i64(uid_gen.next())),
+        ("items", 19, ("array", ("object", []))),
+    ]))
+
+
+def _raster_layer(entries, channel_lookup, uid_gen, label, uv_tile=None, mask_url=None):
+    actions_value, skipped = _raster_action_stack(entries, channel_lookup, uid_gen, label)
     if not actions_value:
         return None, skipped
-    layer = ("DataLayerColor", [
+    fields = [
         ("actions", 18, actions_value),
         ("colorTag", 9, _p_i32(0)),
         ("enabled", 10, _p_bool(True)),
         ("enabledGeometryMask", 10, _p_bool(True)),
         ("enabledMeshDefault", 10, _p_bool(True)),
         ("enabledMeshList", 17, ("array", ("object", []))),
-        ("enabledUVTileDefault", 10, _p_bool(True)),
-        ("enabledUVTileList", 17, ("array", ("object", []))),
         ("gammaCompensation", 10, _p_bool(False)),
         ("geometryMaskType", 9, _p_i32(0)),
-        ("label", 16, _string("Universal SPP raster full stack")),
-        ("maskActions", 18, ("object_null", b"")),
+        ("label", 16, _string(label)),
+        ("maskActions", 18, _bitmap_fill_stack(mask_url, uid_gen) if mask_url else ("object_null", b"")),
         ("maskEnabled", 10, _p_bool(True)),
         ("maskInitial", 9, _p_i32(1)),
         ("perChannelBlending", 17, ("array", ("object", []))),
         ("uid", 12, _p_i64(uid_gen.next())),
-    ])
+    ]
+    _set_tile_restriction(fields, uv_tile)
+    return ("DataLayerColor", fields), skipped
+
+
+def _raster_layer_stack(entries, channel_lookup, uid_gen, label="Universal SPP raster full stack"):
+    layers = []
+    skipped = 0
+    groups = _entries_by_uv_tile(entries)
+    for uv_tile in sorted(groups, key=lambda value: (value is not None, value or 0)):
+        layer, layer_skipped = _raster_layer(
+            groups[uv_tile], channel_lookup, uid_gen,
+            label + (f" {uv_tile}" if uv_tile is not None else ""),
+            uv_tile=uv_tile,
+        )
+        skipped += layer_skipped
+        if layer:
+            layers.append(("object", layer))
+    if not layers:
+        return None, skipped
     stack = ("DataStackLayers", [
-        ("items", 19, ("array", ("object", [("object", layer)]))),
+        ("items", 19, ("array", ("object", layers))),
         ("uid", 12, _p_i64(uid_gen.next())),
     ])
     return ("object", stack), skipped
+
+
+def _has_uv_tiles(entries):
+    return any(_entry_int(entry, "uv_tile") is not None for entry in entries or [])
+
+
+def _tile_wrapper(original, content_entries, mask_entries, channel_lookup, uid_gen):
+    content_groups = _entries_by_uv_tile(content_entries)
+    mask_groups = _entries_by_uv_tile(mask_entries)
+    tiles = set(content_groups) | set(mask_groups)
+    children = []
+    skipped = 0
+    for uv_tile in sorted(tiles, key=lambda value: (value is not None, value or 0)):
+        tile_content = content_groups.get(uv_tile) or []
+        mask_url = _choose_mask_url(mask_groups.get(uv_tile) or [])
+        child, child_skipped = _raster_layer(
+            tile_content,
+            channel_lookup,
+            uid_gen,
+            "Universal SPP raster tile" + (f" {uv_tile}" if uv_tile is not None else ""),
+            uv_tile=uv_tile,
+            mask_url=mask_url,
+        )
+        skipped += child_skipped
+        if child:
+            children.append(("object", child))
+    if not children:
+        return None, skipped
+
+    fields = copy.deepcopy(original[1] or [])
+    actions = _field(fields, "actions")
+    _set_field(fields, "actions", actions[1] if actions else 18, _empty_action_stack(uid_gen))
+    sub_stack = ("object", ("DataStackLayers", [
+        ("items", 19, ("array", ("object", children))),
+        ("uid", 12, _p_i64(uid_gen.next())),
+    ]))
+    existing_sub_stack = _field(fields, "subStack")
+    _set_field(fields, "subStack", existing_sub_stack[1] if existing_sub_stack else 18, sub_stack)
+    if mask_entries:
+        mask_actions = _field(fields, "maskActions")
+        _set_field(fields, "maskActions", mask_actions[1] if mask_actions else 18, ("object_null", b""))
+        _set_field(fields, "maskEnabled", 10, _p_bool(False))
+        _set_field(fields, "maskInitial", 9, _p_i32(1))
+    return ("DataLayerGroup", fields), skipped
 
 
 def _choose_mask_url(entries):
@@ -324,7 +451,12 @@ def _choose_mask_url(entries):
 
 def _replacement_maps(root, replacements, dataset, target, requests=None):
     requests = list(requests or collect_raster_requests(root, dataset=dataset, target=target))
-    mask_urls = {}
+    if dataset:
+        requests = [
+            request for request in requests
+            if not request.get("dataset") or request.get("dataset") == dataset
+        ]
+    mask_entries = {}
     source_entries = {}
     action_entries = {}
     layer_entries = {}
@@ -333,9 +465,8 @@ def _replacement_maps(root, replacements, dataset, target, requests=None):
         entries = replacements.get(req.get("id")) or []
         scope = req.get("scope")
         if scope == S_MASK_STACK:
-            url = _choose_mask_url(entries)
-            if url and req.get("layer_uid") is not None:
-                mask_urls[int(req["layer_uid"])] = url
+            if entries and req.get("layer_uid") is not None:
+                mask_entries[int(req["layer_uid"])] = entries
         elif scope == S_SOURCE and req.get("object_uid") is not None and entries:
             source_entries[int(req["object_uid"])] = entries
         elif scope in (S_CONTENT_ACTION, S_GROUP) and req.get("object_uid") is not None and entries:
@@ -348,7 +479,7 @@ def _replacement_maps(root, replacements, dataset, target, requests=None):
                 layer_entries[int(uid)] = entries
         elif scope == S_FULL_STACK_CHANNEL and req.get("stack_uid") is not None and entries:
             full_stack_entries[int(req["stack_uid"])] = entries
-    return mask_urls, source_entries, action_entries, layer_entries, full_stack_entries
+    return mask_entries, source_entries, action_entries, layer_entries, full_stack_entries
 
 
 def _empty_stats():
@@ -371,18 +502,20 @@ def apply_raster_replacements(root, replacements, *, dataset=None, target=None, 
     if not replacements:
         return root, stats
 
-    mask_urls, source_entries, action_entries, layer_entries, full_stack_entries = _replacement_maps(
+    mask_entries, source_entries, action_entries, layer_entries, full_stack_entries = _replacement_maps(
         root,
         replacements,
         dataset,
         target,
         requests=requests,
     )
-    if not (mask_urls or source_entries or action_entries or layer_entries or full_stack_entries):
+    if not (mask_entries or source_entries or action_entries or layer_entries or full_stack_entries):
         return root, stats
 
     channel_lookup = _channel_mask_lookup(root)
     uid_gen = _UidGen(_max_uid_value(root) + 1000)
+    consumed_layer_uids = set()
+    consumed_mask_uids = set()
 
     def replace_array_elements(elems, allow_sources):
         new_elems = []
@@ -394,6 +527,29 @@ def apply_raster_replacements(root, replacements, *, dataset=None, target=None, 
 
             child = elem[1]
             uid = _uid_of(child)
+            if child[0] in ("DataLayerColor", "DataLayerGroup"):
+                captured_mask_entries = mask_entries.get(uid) or []
+                tile_masks = [entry for entry in captured_mask_entries if entry.get("kind") == "mask"]
+                captured_content = layer_entries.get(uid) or [
+                    entry for entry in captured_mask_entries if entry.get("kind") != "mask"
+                ]
+                if _has_uv_tiles(captured_content) or _has_uv_tiles(tile_masks):
+                    wrapper, skipped = _tile_wrapper(
+                        child, captured_content, tile_masks, channel_lookup, uid_gen
+                    )
+                    stats["channel_assets_skipped"] += skipped
+                    if wrapper:
+                        new_elems.append(("object", wrapper))
+                        changed = True
+                        if layer_entries.get(uid):
+                            consumed_layer_uids.add(uid)
+                            stats["layers_replaced"] += 1
+                        if captured_mask_entries:
+                            consumed_mask_uids.add(uid)
+                            stats["mask_stacks_replaced"] += 1
+                        continue
+                    if layer_entries.get(uid):
+                        stats["layers_skipped"] += 1
             if allow_sources and uid in source_entries:
                 sources, _mask, skipped = _bitmap_sources_from_entries(
                     source_entries[uid],
@@ -458,13 +614,14 @@ def apply_raster_replacements(root, replacements, *, dataset=None, target=None, 
         obj_name, fields = obj
         if obj_name in ("DataLayerColor", "DataLayerGroup"):
             uid = _uid_of(obj)
-            url = mask_urls.get(uid)
+            captured_masks = mask_entries.get(uid) if uid not in consumed_mask_uids else None
+            url = _choose_mask_url(captured_masks)
             if url:
                 existing = _field(fields, "maskActions")
                 tcode = existing[1] if existing else 18
                 _set_field(fields, "maskActions", tcode, _bitmap_fill_stack(url, uid_gen))
                 stats["mask_stacks_replaced"] += 1
-            entries = layer_entries.get(uid)
+            entries = layer_entries.get(uid) if uid not in consumed_layer_uids else None
             if entries and obj_name == "DataLayerColor":
                 actions_value, skipped = _raster_action_stack(
                     entries,
@@ -480,7 +637,9 @@ def apply_raster_replacements(root, replacements, *, dataset=None, target=None, 
                 else:
                     stats["layers_skipped"] += 1
             elif entries and obj_name == "DataLayerGroup":
-                stack_value, skipped = _raster_layer_stack(entries, channel_lookup, uid_gen)
+                stack_value, skipped = _raster_layer_stack(
+                    entries, channel_lookup, uid_gen, "Universal SPP raster group"
+                )
                 stats["channel_assets_skipped"] += skipped
                 if stack_value:
                     existing = _field(fields, "subStack")

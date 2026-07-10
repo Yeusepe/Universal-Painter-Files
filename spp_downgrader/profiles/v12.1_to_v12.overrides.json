@@ -6,6 +6,6 @@
     "DataActionSmudge.sourceTransparent": "array"
   },
   "field_value_transform": {
-    "DataProceduralInput.channelType": { "op": "enum_to_bitmask", "code": 21 }
+    "DataProceduralInput.channelType": { "op": "channel_enum_to_legacy_bitmask", "code": 21 }
   }
 }

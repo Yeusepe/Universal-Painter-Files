@@ -34,6 +34,25 @@ class RasterManifestTests(unittest.TestCase):
                 stored_assets = [n for n in z.namelist() if n.startswith(rm.ASSET_PREFIX)]
                 self.assertEqual(len(stored_assets), 1)
 
+    def test_duplicate_assets_only_consume_budget_once(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            (base / "a.png").write_bytes(b"same")
+            (base / "b.png").write_bytes(b"same")
+            (base / "manifest.json").write_text(json.dumps({
+                "requests": [{"id": "r1"}, {"id": "r2"}],
+                "assets": [
+                    {"request_id": "r1", "path": "a.png"},
+                    {"request_id": "r2", "path": "b.png"},
+                ],
+            }), encoding="utf-8")
+
+            with zipfile.ZipFile(base / "out.uspp", "w") as z:
+                manifest = rm.add_capture_dir_to_zip(z, base, budget_bytes=4)
+
+            self.assertEqual(len(manifest["assets"]), 2)
+            self.assertEqual(manifest["warnings"], [])
+
     def test_summary_reports_missing_requests(self):
         manifest = {
             "requests": [{"id": "r1"}, {"id": "r2"}],
@@ -43,6 +62,17 @@ class RasterManifestTests(unittest.TestCase):
         self.assertTrue(summary["raster_required"])
         self.assertFalse(summary["raster_available"])
         self.assertEqual([r["id"] for r in summary["missing_raster_fallbacks"]], ["r2"])
+
+    def test_explicit_empty_request_list_does_not_fall_back_to_manifest(self):
+        manifest = {
+            "requests": [{"id": "r1"}],
+            "assets": [{"request_id": "r1", "sha256": "abc"}],
+        }
+
+        summary = rm.summarize(manifest, [])
+
+        self.assertFalse(summary["raster_required"])
+        self.assertEqual(summary["raster_request_count"], 0)
 
 
 if __name__ == "__main__":

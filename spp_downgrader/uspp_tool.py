@@ -321,13 +321,27 @@ def cmd_raster_plan(args):
         for dataset_path, raw in items:
             result["requests"].extend(_hbo_raster_requests(raw, dataset_path, s_label, t_label))
     # De-dupe identical request ids across datasets/targets after all targets are scanned.
-    seen = set()
+    seen = {}
     deduped = []
     for req in result["requests"]:
         rid = req.get("id")
-        if rid in seen:
+        previous = seen.get(rid)
+        if previous is not None:
+            for key in ("reason", "object_type"):
+                incoming = req.get(key)
+                current = previous.get(key)
+                if incoming and incoming not in str(current or "").split(","):
+                    previous[key] = ",".join(v for v in (current, incoming) if v)
+            previous_capture = previous.setdefault("capture", {})
+            incoming_capture = req.get("capture") or {}
+            old_mask = previous_capture.get("channel_mask")
+            new_mask = incoming_capture.get("channel_mask")
+            if old_mask is None:
+                previous_capture["channel_mask"] = new_mask
+            elif new_mask is not None:
+                previous_capture["channel_mask"] = old_mask | new_mask
             continue
-        seen.add(rid)
+        seen[rid] = req
         deduped.append(req)
     result["requests"] = deduped
     text = json.dumps(result, indent=2)
@@ -365,11 +379,17 @@ def cmd_build(args):
         build_spp = _import_builder()
         ok = build_spp(args.uspp, args.output, verbose=args.verbose, target_major=t_major)
     else:
-        # exact / native_upgrade: faithful rebuild at the stored version (target_major
-        # None disables the downgrade pipeline); Painter upgrades on open if newer.
+        # Exact / native-upgrade builds copy compatible streams as-is. Painter upgrades
+        # on open if needed; do not infer the source major as a downgrade target.
         os.environ.pop("SPP_PROFILE", None)
         build_spp = _import_builder()
-        ok = build_spp(args.uspp, args.output, verbose=args.verbose, target_major=None)
+        ok = build_spp(
+            args.uspp,
+            args.output,
+            verbose=args.verbose,
+            target_major=None,
+            preserve_source=True,
+        )
 
     if ok:
         print(f"built -> {args.output}")

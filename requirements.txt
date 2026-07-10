@@ -1,7 +1,9 @@
 # Runtime dependencies for the downgrader CLI (spp_downgrader/uspp_tool.py).
 h5py
+lz4
 numpy
 mmh3
+pyspng
 PyYAML
 # py7zr is optional — used only for a substance-graph format check and skipped
 # gracefully if absent. It lives in requirements-dev.txt so the built exe bundles it.

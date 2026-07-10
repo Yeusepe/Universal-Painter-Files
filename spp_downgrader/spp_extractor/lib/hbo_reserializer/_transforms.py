@@ -3,6 +3,35 @@ import struct
 from . import runtime
 
 
+_SOURCE_USER_CHANNEL_START = 64
+_LEGACY_USER_CHANNEL_START = 14
+_LEGACY_USER_CHANNEL_COUNT = 8
+
+
+def _legacy_channel_type(channel_type):
+    if _SOURCE_USER_CHANNEL_START <= channel_type < (
+        _SOURCE_USER_CHANNEL_START + _LEGACY_USER_CHANNEL_COUNT
+    ):
+        return channel_type - _SOURCE_USER_CHANNEL_START + _LEGACY_USER_CHANNEL_START
+    return channel_type
+
+
+def _narrow_channel_mask(raw, size):
+    """Move v12.1 user-channel bits 64..71 back to legacy bits 14..21."""
+    value = int.from_bytes(raw, "little", signed=False)
+    target_mask = (1 << (size * 8)) - 1
+    narrowed = value & target_mask
+    if len(raw) >= 16 and size >= 8:
+        legacy_user_mask = ((1 << _LEGACY_USER_CHANNEL_COUNT) - 1) << _LEGACY_USER_CHANNEL_START
+        source_users = (
+            value >> _SOURCE_USER_CHANNEL_START
+        ) & ((1 << _LEGACY_USER_CHANNEL_COUNT) - 1)
+        narrowed = (narrowed & ~legacy_user_mask) | (
+            source_users << _LEGACY_USER_CHANNEL_START
+        )
+    return narrowed.to_bytes(size, "little")
+
+
 class TransformMixin:
     def _apply_data_action_fill_bitmap(self, fields):
         items_field = self._get_field(fields, "items")
@@ -547,7 +576,10 @@ class TransformMixin:
                 return val, tc
             size = self.PRIMITIVE_SIZES.get(to, len(val[2]))
             b = val[2]
-            b = b[:size] if len(b) >= size else b + b"\x00" * (size - len(b))
+            if val[1] == 22 and to == 12:
+                b = _narrow_channel_mask(b, size)
+            else:
+                b = b[:size] if len(b) >= size else b + b"\x00" * (size - len(b))
             return ("primitive", to, b), to
         if kind == "object":
             child = val[1]
@@ -587,7 +619,10 @@ class TransformMixin:
                 to_code = int(vt.get("code", tcode))
                 size = self.PRIMITIVE_SIZES.get(to_code, len(value[2]))
                 n = int.from_bytes(value[2], "little")
-                if vt.get("op") == "enum_to_bitmask":
+                op = vt.get("op")
+                if op == "channel_enum_to_legacy_bitmask":
+                    n = _legacy_channel_type(n)
+                if op in ("enum_to_bitmask", "channel_enum_to_legacy_bitmask"):
                     out_b = (1 << n).to_bytes(size, "little") if n < size * 8 else b"\x00" * size
                     value, tcode = ("primitive", to_code, out_b), to_code
             rt = runtime.FIELD_RETYPE.get(f"{obj_name}.{name}")
@@ -595,7 +630,10 @@ class TransformMixin:
                 to_code = int(rt)
                 size = self.PRIMITIVE_SIZES.get(to_code, len(value[2]))
                 b = value[2]
-                b = b[:size] if len(b) >= size else b + b"\x00" * (size - len(b))
+                if value[1] == 22 and to_code == 12:
+                    b = _narrow_channel_mask(b, size)
+                else:
+                    b = b[:size] if len(b) >= size else b + b"\x00" * (size - len(b))
                 value, tcode = ("primitive", to_code, b), to_code
             rk = runtime.FIELD_REKIND.get(f"{obj_name}.{name}")
             if rk == "array" and value and value[0] == "object":

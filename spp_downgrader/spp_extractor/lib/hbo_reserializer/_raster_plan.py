@@ -44,7 +44,7 @@ def _primitive_int(value):
     raw = value[2]
     if not raw:
         return None
-    return int.from_bytes(raw[:min(len(raw), 8)], "little", signed=False)
+    return int.from_bytes(raw, "little", signed=False)
 
 
 def _field(fields, name):
@@ -130,7 +130,6 @@ class RasterRequest:
             boundary = self.object_uid or self.path
         seed = {
             "dataset": self.dataset,
-            "target": self.target,
             "scope": self.scope,
             "kind": self.kind,
             "boundary": boundary,
@@ -193,6 +192,12 @@ class RasterPlanner:
                 existing.reason = "; ".join([r for r in (existing.reason, req.reason) if r])
             if req.object_type and req.object_type not in (existing.object_type or "").split(","):
                 existing.object_type = ",".join([r for r in (existing.object_type, req.object_type) if r])
+            old_mask = existing.capture.get("channel_mask")
+            new_mask = req.capture.get("channel_mask")
+            if old_mask is None:
+                existing.capture["channel_mask"] = new_mask
+            elif new_mask is not None:
+                existing.capture["channel_mask"] = old_mask | new_mask
             return
         self._seen[req.id] = req
         self.requests.append(req)
@@ -200,25 +205,31 @@ class RasterPlanner:
     def _scope_for(self, obj_name, ctx, verdict):
         if ctx.get("substack") == _classify.MASK:
             return S_MASK_STACK, K_MASK
-        if ctx.get("in_fill_sources") and obj_name.startswith("DataSource"):
-            return S_SOURCE, K_CONTENT
+        # All action/source captures exposed by the v8 API are complete layer
+        # renders, including actions that sample lower content.
+        if obj_name.startswith(_LOCAL_CONTENT_PREFIXES) or obj_name.startswith("DataAction"):
+            return S_LAYER, K_CONTENT
         if verdict.granularity == _classify.G_COMPOSITE:
             return S_GROUP if ctx.get("group_uid") else S_FULL_STACK_CHANNEL, K_CHANNEL
         if obj_name.startswith(_SPAN_DEPENDENT_PREFIXES):
             return S_GROUP if ctx.get("group_uid") else S_FULL_STACK_CHANNEL, K_CHANNEL
-        if obj_name.startswith(_LOCAL_CONTENT_PREFIXES):
-            return S_SOURCE, K_CONTENT
-        if obj_name.startswith("DataAction"):
-            return S_CONTENT_ACTION, K_CONTENT
+        # The v8-compatible capture API addresses layers, not nested actions or
+        # sources. Its pixels are the complete pre-mask layer result, so using
+        # them at a smaller graph node would duplicate supported neighboring
+        # actions. A layer is therefore the smallest exact local boundary.
         if obj_name.startswith("DataLayer"):
             return S_LAYER, K_CHANNEL
         return S_FULL_STACK_CHANNEL, K_CHANNEL
 
-    def _capture_for(self, scope, kind, ctx):
+    def _capture_for(self, scope, kind, ctx, channel_mask=None):
         if scope == S_MASK_STACK:
             return {"method": "alg.mapexport.save", "selector": [ctx.get("layer_uid"), "mask"]}
         if scope in (S_SOURCE, S_CONTENT_ACTION, S_LAYER):
-            return {"method": "alg.mapexport.save", "selector": [ctx.get("layer_uid"), "<channel>"]}
+            return {
+                "method": "alg.mapexport.save",
+                "selector": [ctx.get("layer_uid"), "<channel>"],
+                "channel_mask": channel_mask,
+            }
         if scope == S_GROUP and ctx.get("layer_uid") is not None:
             return {"method": "alg.mapexport.save", "selector": [ctx.get("layer_uid"), "<channel>"]}
         return {
@@ -229,6 +240,8 @@ class RasterPlanner:
     def _request(self, obj, ctx, verdict):
         obj_name, fields = obj
         scope, kind = self._scope_for(obj_name, ctx, verdict)
+        channel_field = _field(fields, "channelTypes")
+        channel_mask = _primitive_int(channel_field[2]) if channel_field else ctx.get("channel_mask")
         req = RasterRequest(
             dataset=self.dataset,
             target=self.target,
@@ -243,7 +256,7 @@ class RasterPlanner:
             label=_label(obj),
             material_index=ctx.get("material_index"),
             stack_index=ctx.get("stack_index"),
-            capture=self._capture_for(scope, kind, ctx),
+            capture=self._capture_for(scope, kind, ctx, channel_mask),
             preserves_editability=("low" if scope in (S_GROUP, S_FULL_STACK_CHANNEL) else "partial"),
             visual_confidence="exact",
         )
@@ -255,6 +268,9 @@ class RasterPlanner:
         obj_name, fields = obj
         uid = _object_uid(obj)
         nctx = dict(ctx)
+        channel_field = _field(fields, "channelTypes")
+        if channel_field:
+            nctx["channel_mask"] = _primitive_int(channel_field[2])
         if obj_name in ("DataLayerColor", "DataLayerGroup"):
             nctx["layer_uid"] = uid
         if obj_name in ("DataStackActions", "DataStackLayers"):
