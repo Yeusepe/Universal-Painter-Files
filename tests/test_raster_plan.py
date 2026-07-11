@@ -152,6 +152,56 @@ class RasterPlanScopeTests(unittest.TestCase):
             ["<material>", "<stack>", "<channel>"],
         )
 
+    def test_masked_reference_effects_produce_separate_overlay_requests(self):
+        def effect(uid, source_uid, label):
+            return obj("DataLayerGroup", [
+                field("uid", prim(9, uid), 9),
+                field("label", ("string", label.encode("utf-8")), 16),
+                field("actions", oval(obj("DataStackActions", [
+                    field("items", arr(obj("DataActionFill", [
+                        field("channelTypes", prim(9, 1), 9),
+                        field("sources", arr(obj("DataSourceReference", [
+                            field("uid", prim(9, source_uid), 9),
+                            field("channelTypes", prim(9, 1), 9),
+                        ])), 0x13),
+                    ])), 0x13),
+                ]))),
+                field("maskActions", oval(obj("DataStackActions", [
+                    field("items", arr(obj("DataActionGroup", [
+                        field("uid", prim(9, uid + 100), 9),
+                    ])), 0x13),
+                ]))),
+            ])
+
+        root = obj("DataDocument", [
+            field("materials", arr(obj("DataMaterial", [
+                field("stacks", arr(obj("DataMaterialStack", [
+                    field("stack", oval(obj("DataStackLayers", [
+                        field("uid", prim(9, 900), 9),
+                        field("items", arr(
+                            effect(42, 30, "Iris Right Override"),
+                            effect(43, 31, "Iris Left Override"),
+                        ), 0x13),
+                    ]))),
+                ])), 0x13),
+            ])), 0x13),
+        ])
+
+        reqs = self.collect(root, blacklist=["DataSourceReference"])
+
+        self.assertEqual(len(reqs), 2)
+        self.assertEqual({req["scope"] for req in reqs}, {rp.S_EFFECT_OVERLAY})
+        self.assertEqual(
+            {req["label"] for req in reqs},
+            {"Iris Right Override", "Iris Left Override"},
+        )
+        self.assertEqual(len({req["id"] for req in reqs}), 2)
+        self.assertEqual({req["stack_uid"] for req in reqs}, {900})
+        self.assertEqual(
+            {tuple(req["capture"]["mask_selector"]) for req in reqs},
+            {(42, "mask"), (43, "mask")},
+        )
+
     def test_full_stack_channel_only_shadows_matching_local_channels(self):
         root = obj("DataDocument", [
             field("materials", arr(obj("DataMaterial", [

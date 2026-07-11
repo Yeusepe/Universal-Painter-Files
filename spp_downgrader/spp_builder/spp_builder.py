@@ -722,6 +722,7 @@ class SPPBuilder:
                             "sources_replaced",
                             "content_actions_replaced",
                             "layers_replaced",
+                            "effect_overlays_replaced",
                             "full_stacks_replaced",
                         )):
                             parts = []
@@ -733,6 +734,8 @@ class SPPBuilder:
                                 parts.append(f"actions={raster_stats['content_actions_replaced']}")
                             if raster_stats.get("layers_replaced"):
                                 parts.append(f"layers={raster_stats['layers_replaced']}")
+                            if raster_stats.get("effect_overlays_replaced"):
+                                parts.append(f"effects={raster_stats['effect_overlays_replaced']}")
                             if raster_stats.get("full_stacks_replaced"):
                                 parts.append(f"full_stacks={raster_stats['full_stacks_replaced']}")
                             self.log("  Raster replacements applied: " + ", ".join(parts))

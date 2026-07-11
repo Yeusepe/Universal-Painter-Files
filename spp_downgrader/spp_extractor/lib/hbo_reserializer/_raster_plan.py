@@ -16,6 +16,7 @@ S_MASK_STACK = "mask_stack"
 S_CONTENT_ACTION = "content_action"
 S_LAYER = "layer"
 S_GROUP = "group"
+S_EFFECT_OVERLAY = "effect_overlay"
 S_FULL_STACK_CHANNEL = "full_stack_channel"
 
 K_MASK = "mask"
@@ -86,6 +87,19 @@ def _blend_mode(obj):
     return None
 
 
+def _has_mask_actions(fields):
+    mask = _field(fields, "maskActions")
+    if not mask or mask[2][0] != "object" or not isinstance(mask[2][1], tuple):
+        return False
+    items = _field(mask[2][1][1], "items")
+    return bool(
+        items
+        and items[2][0] == "array"
+        and items[2][1][0] == "object"
+        and items[2][1][1]
+    )
+
+
 class RasterRequest:
     __slots__ = (
         "id", "dataset", "target", "scope", "kind", "object_type", "reason",
@@ -124,6 +138,8 @@ class RasterRequest:
             boundary = self.layer_uid
         elif self.scope == S_GROUP:
             boundary = self.object_uid or self.layer_uid
+        elif self.scope == S_EFFECT_OVERLAY:
+            boundary = self.layer_uid
         elif self.scope == S_FULL_STACK_CHANNEL:
             boundary = self.stack_uid or self.dataset
         else:
@@ -179,6 +195,7 @@ class RasterPlanner:
             "layer_uid": None,
             "layer_type": None,
             "layer_label": None,
+            "layer_has_mask": False,
             "stack_uid": None,
             "root_stack_uid": None,
             "in_fill_sources": False,
@@ -246,13 +263,15 @@ class RasterPlanner:
         if ctx.get("substack") == _classify.MASK:
             return S_MASK_STACK, K_MASK
         # `mapexport.save([uid, channel])` renders leaf layers, but group UIDs
-        # produce transparent images. Unsupported actions/sources attached to a
-        # DataLayerGroup are Painter effect layers, so capture the evaluated
-        # material-stack channel instead.
+        # produce transparent images. A masked effect can still be separated by
+        # pairing the evaluated stack channel with its independently capturable
+        # layer mask. Unmasked effects require the whole channel fallback.
         if ctx.get("layer_type") == "DataLayerGroup" and (
             obj_name.startswith(_LOCAL_CONTENT_PREFIXES)
             or obj_name.startswith("DataAction")
         ):
+            if ctx.get("layer_has_mask"):
+                return S_EFFECT_OVERLAY, K_CHANNEL
             return S_FULL_STACK_CHANNEL, K_CHANNEL
         # All action/source captures exposed by the v8 API are complete layer
         # renders, including actions that sample lower content.
@@ -281,6 +300,13 @@ class RasterPlanner:
             }
         if scope == S_GROUP and ctx.get("layer_uid") is not None:
             return {"method": "alg.mapexport.save", "selector": [ctx.get("layer_uid"), "<channel>"]}
+        if scope == S_EFFECT_OVERLAY:
+            return {
+                "method": "alg.mapexport.save",
+                "selector": ["<material>", "<stack>", "<channel>"],
+                "mask_selector": [ctx.get("layer_uid"), "mask"],
+                "channel_mask": channel_mask,
+            }
         return {
             "method": "alg.mapexport.save",
             "selector": ["<material>", "<stack>", "<channel>"],
@@ -307,7 +333,9 @@ class RasterPlanner:
             material_index=ctx.get("material_index"),
             stack_index=ctx.get("stack_index"),
             capture=self._capture_for(scope, kind, ctx, channel_mask),
-            preserves_editability=("low" if scope in (S_GROUP, S_FULL_STACK_CHANNEL) else "partial"),
+            preserves_editability=(
+                "low" if scope in (S_GROUP, S_FULL_STACK_CHANNEL) else "partial"
+            ),
             visual_confidence="exact",
         )
         self._add(req)
@@ -325,6 +353,7 @@ class RasterPlanner:
             nctx["layer_uid"] = uid
             nctx["layer_type"] = obj_name
             nctx["layer_label"] = _label(obj)
+            nctx["layer_has_mask"] = _has_mask_actions(fields)
         if obj_name in ("DataStackActions", "DataStackLayers"):
             nctx["stack_uid"] = uid
         if obj_name == "DataStackLayers" and nctx.get("root_stack_uid") is None:

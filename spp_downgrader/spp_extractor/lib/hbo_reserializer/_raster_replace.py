@@ -12,6 +12,7 @@ from ._raster_plan import (
     S_CONTENT_ACTION,
     S_GROUP,
     S_MASK_STACK,
+    S_EFFECT_OVERLAY,
     S_FULL_STACK_CHANNEL,
     S_SOURCE,
     S_LAYER,
@@ -439,16 +440,7 @@ def _raster_group_label(entries, channel_lookup):
     return "Universal SPP Raster - " + suffix
 
 
-def _raster_full_stack_group(entries, channel_lookup, uid_gen):
-    group_label = _raster_group_label(entries, channel_lookup)
-    stack_value, skipped = _raster_layer_stack(
-        entries,
-        channel_lookup,
-        uid_gen,
-        "Raster",
-    )
-    if not stack_value:
-        return None, skipped
+def _raster_group(label, stack_value, uid_gen):
     fields = [
         ("GUIcollapsedState", 10, _p_bool(False)),
         ("actions", 18, _empty_action_stack(uid_gen)),
@@ -459,7 +451,7 @@ def _raster_full_stack_group(entries, channel_lookup, uid_gen):
         ("enabledMeshList", 17, ("array", ("object", []))),
         ("gammaCompensation", 10, _p_bool(False)),
         ("geometryMaskType", 9, _p_i32(0)),
-        ("label", 16, _string(group_label)),
+        ("label", 16, _string(label)),
         ("maskActions", 18, ("object_null", b"")),
         ("maskEnabled", 10, _p_bool(True)),
         ("maskInitial", 9, _p_i32(1)),
@@ -468,7 +460,20 @@ def _raster_full_stack_group(entries, channel_lookup, uid_gen):
         ("uid", 12, _p_i64(uid_gen.next())),
     ]
     _set_tile_restriction(fields, None)
-    return ("DataLayerGroup", fields), skipped
+    return ("DataLayerGroup", fields)
+
+
+def _raster_full_stack_group(entries, channel_lookup, uid_gen):
+    group_label = _raster_group_label(entries, channel_lookup)
+    stack_value, skipped = _raster_layer_stack(
+        entries,
+        channel_lookup,
+        uid_gen,
+        "Raster",
+    )
+    if not stack_value:
+        return None, skipped
+    return _raster_group(group_label, stack_value, uid_gen), skipped
 
 
 def _has_uv_tiles(entries):
@@ -536,6 +541,7 @@ def _replacement_maps(root, replacements, dataset, target, requests=None):
     source_entries = {}
     action_entries = {}
     layer_entries = {}
+    effect_overlay_entries = {}
     full_stack_entries = {}
     for req in requests:
         entries = replacements.get(req.get("id")) or []
@@ -553,6 +559,20 @@ def _replacement_maps(root, replacements, dataset, target, requests=None):
             uid = layer_uid if layer_uid is not None else object_uid
             if uid is not None:
                 layer_entries[int(uid)] = entries
+        elif scope == S_EFFECT_OVERLAY and entries:
+            decorated = []
+            for entry in entries:
+                item = dict(entry)
+                item["_fallback_label"] = req.get("label")
+                item["_fallback_request_id"] = req.get("id")
+                item["_fallback_layer_uid"] = req.get("layer_uid")
+                if item.get("material_index") is None:
+                    item["material_index"] = req.get("material_index")
+                if item.get("stack_index") is None:
+                    item["stack_index"] = req.get("stack_index")
+                decorated.append(item)
+            if req.get("layer_uid") is not None:
+                effect_overlay_entries[int(req["layer_uid"])] = decorated
         elif scope == S_FULL_STACK_CHANNEL and entries:
             decorated = []
             for entry in entries:
@@ -567,7 +587,14 @@ def _replacement_maps(root, replacements, dataset, target, requests=None):
                 ).extend(decorated)
             if req.get("stack_uid") is not None:
                 full_stack_entries.setdefault(("uid", int(req["stack_uid"])), []).extend(decorated)
-    return mask_entries, source_entries, action_entries, layer_entries, full_stack_entries
+    return (
+        mask_entries,
+        source_entries,
+        action_entries,
+        layer_entries,
+        effect_overlay_entries,
+        full_stack_entries,
+    )
 
 
 def _empty_stats():
@@ -576,10 +603,12 @@ def _empty_stats():
         "sources_replaced": 0,
         "content_actions_replaced": 0,
         "layers_replaced": 0,
+        "effect_overlays_replaced": 0,
         "full_stacks_replaced": 0,
         "source_replacements_skipped": 0,
         "content_actions_skipped": 0,
         "layers_skipped": 0,
+        "effect_overlays_skipped": 0,
         "full_stacks_skipped": 0,
         "channel_assets_skipped": 0,
     }
@@ -590,14 +619,24 @@ def apply_raster_replacements(root, replacements, *, dataset=None, target=None, 
     if not replacements:
         return root, stats
 
-    mask_entries, source_entries, action_entries, layer_entries, full_stack_entries = _replacement_maps(
+    (
+        mask_entries,
+        source_entries,
+        action_entries,
+        layer_entries,
+        effect_overlay_entries,
+        full_stack_entries,
+    ) = _replacement_maps(
         root,
         replacements,
         dataset,
         target,
         requests=requests,
     )
-    if not (mask_entries or source_entries or action_entries or layer_entries or full_stack_entries):
+    if not (
+        mask_entries or source_entries or action_entries or layer_entries
+        or effect_overlay_entries or full_stack_entries
+    ):
         return root, stats
 
     channel_lookup = _channel_mask_lookup(root)
@@ -658,6 +697,25 @@ def apply_raster_replacements(root, replacements, *, dataset=None, target=None, 
             child = elem[1]
             uid = _uid_of(child)
             if child[0] in ("DataLayerColor", "DataLayerGroup"):
+                effect_entries = effect_overlay_entries.get(uid) or []
+                if effect_entries and child[0] == "DataLayerGroup":
+                    effect_content = [
+                        entry for entry in effect_entries if entry.get("kind") != "mask"
+                    ]
+                    effect_masks = [
+                        entry for entry in effect_entries if entry.get("kind") == "mask"
+                    ]
+                    wrapper, skipped = _tile_wrapper(
+                        child, effect_content, effect_masks, channel_lookup, uid_gen
+                    )
+                    stats["channel_assets_skipped"] += skipped
+                    if wrapper:
+                        new_elems.append(("object", wrapper))
+                        stats["effect_overlays_replaced"] += 1
+                        changed = True
+                        continue
+                    stats["effect_overlays_skipped"] += 1
+
                 captured_mask_entries = mask_entries.get(uid) or []
                 tile_masks = [entry for entry in captured_mask_entries if entry.get("kind") == "mask"]
                 captured_content = layer_entries.get(uid) or [

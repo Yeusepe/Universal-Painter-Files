@@ -444,6 +444,111 @@ class RasterReplaceTests(unittest.TestCase):
             [(0, 0), (1, 0)],
         )
 
+    def test_masked_effect_overlays_are_separate_toggleable_groups(self):
+        original_children = [
+            obj("DataLayerColor", [
+                field("uid", prim(12, 40), 12),
+                field("label", ("string", b"Before"), 16),
+            ]),
+            obj("DataLayerGroup", [
+                field("uid", prim(12, 50), 12),
+                field("label", ("string", b"Iris Right Override"), 16),
+                field("enabled", pvalue(0, 10), 10),
+                field("GUIcollapsedState", pvalue(1, 10), 10),
+            ]),
+            obj("DataLayerGroup", [
+                field("uid", prim(12, 51), 12),
+                field("label", ("string", b"Iris Left Override"), 16),
+                field("enabled", pvalue(1, 10), 10),
+            ]),
+            obj("DataLayerColor", [
+                field("uid", prim(12, 52), 12),
+                field("label", ("string", b"After"), 16),
+            ]),
+        ]
+        root = obj("DataDocument", [
+            field("materials", arr(obj("DataMaterial", [
+                field("stacks", arr(obj("DataMaterialStack", [
+                    field("channels", arr(obj("DataChannel", [
+                        field("type", pvalue(0, 9), 9),
+                    ])), 19),
+                    field("stack", oval(obj("DataStackLayers", [
+                        field("uid", prim(12, 900), 12),
+                        field("items", arr(obj("DataLayerGroup", [
+                            field("uid", prim(12, 42), 12),
+                            field("label", ("string", b"Original Eyes"), 16),
+                            field("subStack", oval(obj("DataStackLayers", [
+                                field("uid", prim(12, 43), 12),
+                                field("items", arr(*original_children), 19),
+                            ]))),
+                        ])), 19),
+                    ]))),
+                ])), 19),
+            ])), 19),
+        ])
+        shared = {
+            "url": "/shared-final-basecolor",
+            "kind": "full_stack_channel",
+            "channel": "baseColor",
+            "material_index": 0,
+            "stack_index": 0,
+            "uv_tile": 1001,
+        }
+        replacements = {
+            "rf_right": [dict(shared), {
+                "url": "/right-mask", "kind": "mask", "uv_tile": 1001,
+                "material_index": None, "stack_index": None,
+            }],
+            "rf_left": [dict(shared), {
+                "url": "/left-mask", "kind": "mask", "uv_tile": 1001,
+                "material_index": None, "stack_index": None,
+            }],
+        }
+        requests = [
+            {"id": "rf_right", "scope": "effect_overlay", "layer_uid": 50,
+             "stack_uid": 900, "material_index": 0, "stack_index": 0,
+             "label": "Iris Right Override"},
+            {"id": "rf_left", "scope": "effect_overlay", "layer_uid": 51,
+             "stack_uid": 900, "material_index": 0, "stack_index": 0,
+             "label": "Iris Left Override"},
+        ]
+
+        root, stats = rr.apply_raster_replacements(
+            root, replacements, requests=requests
+        )
+
+        self.assertEqual(stats["effect_overlays_replaced"], 2)
+        material = root[1][0][2][1][1][0][1]
+        stack_obj = get_field(material, "stacks")[2][1][1][0][1]
+        items = get_field(get_field(stack_obj, "stack")[2][1], "items")[2][1][1]
+        self.assertEqual(len(items), 1)
+        self.assertEqual(get_field(items[0][1], "label")[2][1], b"Original Eyes")
+        eyes = items[0][1]
+        effects = get_field(get_field(eyes, "subStack")[2][1], "items")[2][1][1]
+        self.assertEqual(
+            [get_field(effect[1], "label")[2][1] for effect in effects],
+            [b"Before", b"Iris Right Override", b"Iris Left Override", b"After"],
+        )
+        self.assertEqual(int_field(effects[1][1], "uid"), 50)
+        self.assertEqual(int_field(effects[2][1], "uid"), 51)
+        self.assertEqual(int_field(effects[1][1], "enabled"), 0)
+        self.assertEqual(int_field(effects[1][1], "GUIcollapsedState"), 1)
+        for effect, expected_mask in zip(
+                effects[1:3], (b"/right-mask", b"/left-mask")):
+            children = get_field(
+                get_field(effect[1], "subStack")[2][1], "items"
+            )[2][1][1]
+            self.assertEqual(len(children), 1)
+            child = children[0][1]
+            fill = get_field(get_field(child, "actions")[2][1], "items")[2][1][1][0][1]
+            self.assertEqual(int_field(fill, "projection"), 0)
+            mask_fill = get_field(
+                get_field(child, "maskActions")[2][1], "items"
+            )[2][1][1][0][1]
+            mask_source = get_field(mask_fill, "sources")[2][1][1][0][1]
+            bitmap = get_field(mask_source, "bitmap")[2][1]
+            self.assertEqual(get_field(bitmap, "urlToBitmapRes")[2][1], expected_mask)
+
     def test_legacy_channel_name_mapping_is_conservative(self):
         root = obj("DataLayerColor", [
             field("uid", prim(12, 42), 12),
