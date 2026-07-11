@@ -15,6 +15,7 @@ import time
 import tempfile
 import traceback
 import contextlib
+import importlib
 import uuid
 import zipfile
 
@@ -32,7 +33,13 @@ except ImportError:
     _PYSIDE = 2
     _QAction = QtWidgets.QAction
 
+_HOT_RELOAD = "_menu" in globals()
+
 from .lib import runner, version, dialogs, progress, updater, legacy_uv_export
+
+if _HOT_RELOAD:
+    for _module in (runner, version, dialogs, progress, updater, legacy_uv_export):
+        importlib.reload(_module)
 
 _menu = None
 _actions = []   # strong refs so Qt doesn't garbage-collect the menu actions
