@@ -128,6 +128,9 @@ function _captureStackChannels(req, index, outDir, assets, cache) {
     }
     for (var c = 0; c < stack.channels.length; ++c) {
       var channel = stack.channels[c]
+      if (!_requestWantsChannel(req, channel)) {
+        continue
+      }
       var key = "stack|" + stack.material_index + "|" + stack.stack_index + "|" + channel
       if (cache[key] === undefined) {
         var name = _safe("stack_" + stack.material_index + "_" + stack.stack_index + "_" + channel + ".png")

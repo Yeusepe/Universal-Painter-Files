@@ -177,13 +177,51 @@ class RasterPlanner:
             "substack": None,
             "path": (),
             "layer_uid": None,
+            "layer_type": None,
+            "layer_label": None,
             "stack_uid": None,
+            "root_stack_uid": None,
             "in_fill_sources": False,
             "group_uid": None,
             "material_index": None,
             "stack_index": None,
         })
+        self._prune_requests_shadowed_by_full_stack()
         return [r.to_dict() for r in self.requests]
+
+    def _prune_requests_shadowed_by_full_stack(self):
+        """A baked stack channel supersedes local captures for that same channel."""
+        full_masks = {}
+        for req in self.requests:
+            if req.scope != S_FULL_STACK_CHANNEL:
+                continue
+            key = (req.dataset, req.material_index, req.stack_index)
+            mask = req.capture.get("channel_mask")
+            if key not in full_masks:
+                full_masks[key] = mask
+            elif full_masks[key] is None or mask is None:
+                full_masks[key] = None
+            else:
+                full_masks[key] |= mask
+
+        kept = []
+        for req in self.requests:
+            if req.scope in (S_FULL_STACK_CHANNEL, S_MASK_STACK):
+                kept.append(req)
+                continue
+            key = (req.dataset, req.material_index, req.stack_index)
+            if key not in full_masks:
+                kept.append(req)
+                continue
+            full_mask = full_masks[key]
+            local_mask = req.capture.get("channel_mask")
+            if full_mask is None or local_mask is None:
+                continue
+            remaining = local_mask & ~full_mask
+            if remaining:
+                req.capture["channel_mask"] = remaining
+                kept.append(req)
+        self.requests = kept
 
     def _add(self, req):
         existing = self._seen.get(req.id)
@@ -198,6 +236,8 @@ class RasterPlanner:
                 existing.capture["channel_mask"] = new_mask
             elif new_mask is not None:
                 existing.capture["channel_mask"] = old_mask | new_mask
+            if req.label and req.label not in str(existing.label or "").split(" + "):
+                existing.label = " + ".join(v for v in (existing.label, req.label) if v)
             return
         self._seen[req.id] = req
         self.requests.append(req)
@@ -205,6 +245,15 @@ class RasterPlanner:
     def _scope_for(self, obj_name, ctx, verdict):
         if ctx.get("substack") == _classify.MASK:
             return S_MASK_STACK, K_MASK
+        # `mapexport.save([uid, channel])` renders leaf layers, but group UIDs
+        # produce transparent images. Unsupported actions/sources attached to a
+        # DataLayerGroup are Painter effect layers, so capture the evaluated
+        # material-stack channel instead.
+        if ctx.get("layer_type") == "DataLayerGroup" and (
+            obj_name.startswith(_LOCAL_CONTENT_PREFIXES)
+            or obj_name.startswith("DataAction")
+        ):
+            return S_FULL_STACK_CHANNEL, K_CHANNEL
         # All action/source captures exposed by the v8 API are complete layer
         # renders, including actions that sample lower content.
         if obj_name.startswith(_LOCAL_CONTENT_PREFIXES) or obj_name.startswith("DataAction"):
@@ -235,6 +284,7 @@ class RasterPlanner:
         return {
             "method": "alg.mapexport.save",
             "selector": ["<material>", "<stack>", "<channel>"],
+            "channel_mask": channel_mask,
         }
 
     def _request(self, obj, ctx, verdict):
@@ -251,9 +301,9 @@ class RasterPlanner:
             reason=verdict.reason,
             path=ctx.get("path") or (),
             layer_uid=ctx.get("layer_uid"),
-            stack_uid=ctx.get("stack_uid"),
+            stack_uid=ctx.get("root_stack_uid") or ctx.get("stack_uid"),
             object_uid=_object_uid(obj),
-            label=_label(obj),
+            label=_label(obj) or ctx.get("layer_label"),
             material_index=ctx.get("material_index"),
             stack_index=ctx.get("stack_index"),
             capture=self._capture_for(scope, kind, ctx, channel_mask),
@@ -273,12 +323,21 @@ class RasterPlanner:
             nctx["channel_mask"] = _primitive_int(channel_field[2])
         if obj_name in ("DataLayerColor", "DataLayerGroup"):
             nctx["layer_uid"] = uid
+            nctx["layer_type"] = obj_name
+            nctx["layer_label"] = _label(obj)
         if obj_name in ("DataStackActions", "DataStackLayers"):
             nctx["stack_uid"] = uid
+        if obj_name == "DataStackLayers" and nctx.get("root_stack_uid") is None:
+            nctx["root_stack_uid"] = uid
         if obj_name == "DataActionGroup":
             nctx["group_uid"] = uid or nctx.get("group_uid")
 
         verdict = self.classifier.classify(obj, substack=nctx.get("substack"))
+        # Anchors do not render pixels. Their consumers are planned separately;
+        # rasterizing the anchor's containing layer needlessly destroys editable
+        # content and group UIDs cannot be captured correctly anyway.
+        if obj_name == "DataActionAnchor" and nctx.get("substack") != _classify.MASK:
+            verdict = _classify.Verdict(_classify.KEEP, reason="anchor marker has no pixels")
         if verdict.action == _classify.BAKE:
             self._request(obj, nctx, verdict)
         elif verdict.action == _classify.DROP:

@@ -35,6 +35,7 @@ class RasterPlanScopeTests(unittest.TestCase):
         return clf.Classifier(
             schema={
                 "DataLayerColor": ["actions", "maskActions", "uid"],
+                "DataLayerGroup": ["actions", "maskActions", "subStack", "uid"],
                 "DataDocument": ["materials"],
                 "DataMaterial": ["stacks"],
                 "DataMaterialStack": ["stack"],
@@ -45,7 +46,7 @@ class RasterPlanScopeTests(unittest.TestCase):
                 "DataSourceBitmap": ["bitmap", "uid"],
             },
             target_members=frozenset({
-                "DataLayerColor", "DataStackActions", "DataActionFill",
+                "DataLayerColor", "DataLayerGroup", "DataStackActions", "DataActionFill",
                 "DataActionGroup", "DataSourceBitmap", "DataDocument",
                 "DataMaterial", "DataMaterialStack", "DataStackLayers",
                 "uid", "items", "actions", "maskActions", "sources",
@@ -113,6 +114,101 @@ class RasterPlanScopeTests(unittest.TestCase):
         ])
         reqs = self.collect(root)
         self.assertEqual(reqs[0]["scope"], rp.S_LAYER)
+
+    def test_reference_effect_group_promotes_affected_channel_to_root_stack(self):
+        root = obj("DataDocument", [
+            field("materials", arr(obj("DataMaterial", [
+                field("stacks", arr(obj("DataMaterialStack", [
+                    field("stack", oval(obj("DataStackLayers", [
+                        field("uid", prim(9, 900), 9),
+                        field("items", arr(obj("DataLayerGroup", [
+                            field("uid", prim(9, 42), 9),
+                            field("label", ("string", b"Iris Override"), 16),
+                            field("actions", oval(obj("DataStackActions", [
+                                field("uid", prim(9, 100), 9),
+                                field("items", arr(obj("DataActionFill", [
+                                    field("channelTypes", prim(9, 1), 9),
+                                    field("sources", arr(obj("DataSourceReference", [
+                                        field("uid", prim(9, 30), 9),
+                                        field("channelTypes", prim(9, 1), 9),
+                                    ])), 0x13),
+                                ])), 0x13),
+                            ]))),
+                        ])), 0x13),
+                    ]))),
+                ])), 0x13),
+            ])), 0x13),
+        ])
+
+        reqs = self.collect(root, blacklist=["DataSourceReference"])
+
+        self.assertEqual(len(reqs), 1)
+        self.assertEqual(reqs[0]["scope"], rp.S_FULL_STACK_CHANNEL)
+        self.assertEqual(reqs[0]["stack_uid"], 900)
+        self.assertEqual(reqs[0]["label"], "Iris Override")
+        self.assertEqual(reqs[0]["capture"]["channel_mask"], 1)
+        self.assertEqual(
+            reqs[0]["capture"]["selector"],
+            ["<material>", "<stack>", "<channel>"],
+        )
+
+    def test_full_stack_channel_only_shadows_matching_local_channels(self):
+        root = obj("DataDocument", [
+            field("materials", arr(obj("DataMaterial", [
+                field("stacks", arr(obj("DataMaterialStack", [
+                    field("stack", oval(obj("DataStackLayers", [
+                        field("uid", prim(9, 900), 9),
+                        field("items", arr(
+                            obj("DataLayerGroup", [
+                                field("uid", prim(9, 42), 9),
+                                field("actions", oval(obj("DataStackActions", [
+                                    field("items", arr(obj("DataActionFill", [
+                                        field("channelTypes", prim(9, 1), 9),
+                                        field("sources", arr(obj("DataSourceReference", [
+                                            field("uid", prim(9, 30), 9),
+                                            field("channelTypes", prim(9, 1), 9),
+                                        ])), 0x13),
+                                    ])), 0x13),
+                                ]))),
+                            ]),
+                            obj("DataLayerColor", [
+                                field("uid", prim(9, 43), 9),
+                                field("actions", oval(obj("DataStackActions", [
+                                    field("items", arr(obj("DataActionFill", [
+                                        field("channelTypes", prim(9, 2), 9),
+                                        field("sources", arr(obj("DataSourceVectorial", [
+                                            field("uid", prim(9, 31), 9),
+                                            field("channelTypes", prim(9, 2), 9),
+                                        ])), 0x13),
+                                    ])), 0x13),
+                                ]))),
+                            ]),
+                        ), 0x13),
+                    ]))),
+                ])), 0x13),
+            ])), 0x13),
+        ])
+
+        reqs = self.collect(
+            root, blacklist=["DataSourceReference", "DataSourceVectorial"]
+        )
+
+        self.assertEqual(len(reqs), 2)
+        by_scope = {req["scope"]: req for req in reqs}
+        self.assertEqual(by_scope[rp.S_FULL_STACK_CHANNEL]["capture"]["channel_mask"], 1)
+        self.assertEqual(by_scope[rp.S_LAYER]["capture"]["channel_mask"], 2)
+
+    def test_anchor_marker_does_not_request_raster_pixels(self):
+        root = obj("DataLayerColor", [
+            field("uid", prim(9, 10), 9),
+            field("actions", oval(obj("DataStackActions", [
+                field("items", arr(obj("DataActionAnchor", [
+                    field("uid", prim(9, 40), 9),
+                ])), 0x13),
+            ]))),
+        ])
+
+        self.assertEqual(self.collect(root), [])
 
     def test_span_dependent_generator_uses_exact_renderable_layer_scope(self):
         root = obj("DataLayerColor", [
