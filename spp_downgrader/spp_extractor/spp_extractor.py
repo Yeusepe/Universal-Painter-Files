@@ -419,7 +419,8 @@ class SPPExtractor:
         return value
 
     def save_as_uspp(self, extraction: SPPExtraction, output_path: str,
-                     extra_manifest: dict = None, raster_capture_dir: str = None):
+                     extra_manifest: dict = None, raster_capture_dir: str = None,
+                     raster_budget_bytes: int = None):
         """Save extraction result as a USPP (ZIP) archive. extra_manifest merges extra
         top-level fields into manifest.json (e.g. created_version, supported_versions)."""
         output_path = Path(output_path)
@@ -491,7 +492,10 @@ class SPPExtractor:
             zf.writestr('datasets.json', json.dumps(datasets_info, indent=2))
             try:
                 from lib.raster_manifest import add_capture_dir_to_zip
-                add_capture_dir_to_zip(zf, raster_capture_dir)
+                kwargs = {}
+                if raster_budget_bytes is not None:
+                    kwargs["budget_bytes"] = int(raster_budget_bytes)
+                add_capture_dir_to_zip(zf, raster_capture_dir, **kwargs)
             except Exception as e:
                 zf.writestr('raster/manifest.json', json.dumps({
                     "version": 1,

@@ -99,6 +99,8 @@ Common actions:
 - **Universal > Check for Updates...** checks GitHub Releases for a newer plugin
   build. The plugin can also check once per day on startup, but it always asks
   before installing and requires a Painter restart to finish the update.
+- **Universal > Plugin Settings...** configures raster fallback capture, archive
+  budget, bit depth, padding, evaluation timeout, diagnostics, and update checks.
 
 More plugin detail is in
 [`universal_spp_plugin/README.md`](universal_spp_plugin/README.md).

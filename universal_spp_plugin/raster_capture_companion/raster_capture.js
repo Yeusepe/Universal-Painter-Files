@@ -1,3 +1,5 @@
+var _captureOptions = {}
+
 function _readJson(path) {
   var f = alg.fileIO.open(path, "r")
   var text = f.readAll()
@@ -63,17 +65,22 @@ function _indexDocument() {
 
 function _exportConfig(kind, channel) {
   var conf = {
-    padding: "Transparent",
+    padding: _captureOptions.padding === "infinite" ? "Infinite" : "Transparent",
     dilation: 0,
     bitDepth: kind === "mask" ? 8 : 8,
     keepAlpha: true
   }
   if (kind !== "mask" && channel) {
-    try {
-      var fmt = alg.mapexport.channelFormat(channel.path, channel.name)
-      conf.bitDepth = Math.min(fmt.bitDepth || 8, 16)
-    } catch (e) {
-      conf.bitDepth = 8
+    var forcedDepth = String(_captureOptions.content_bit_depth || "source")
+    if (forcedDepth === "8" || forcedDepth === "16") {
+      conf.bitDepth = parseInt(forcedDepth, 10)
+    } else {
+      try {
+        var fmt = alg.mapexport.channelFormat(channel.path, channel.name)
+        conf.bitDepth = Math.min(fmt.bitDepth || 8, 16)
+      } catch (e) {
+        conf.bitDepth = 8
+      }
     }
   }
   return conf
@@ -305,7 +312,8 @@ function cleanupCapture(preparationPath) {
   _removePreparedChannels(preparationPath, null)
 }
 
-function capture(planPath, manifestPath, preparationPath) {
+function capture(planPath, manifestPath, preparationPath, optionsPath) {
+  _captureOptions = _readJson(optionsPath)
   var plan = _readJson(planPath)
   var index = _indexDocument()
   var outDir = _dir(manifestPath)

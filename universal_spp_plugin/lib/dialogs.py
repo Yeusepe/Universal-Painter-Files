@@ -152,8 +152,8 @@ def up_to_date(current):
     info(f"Universal SPP is up to date. You are using {current}.", "Universal SPP Updates")
 
 
-def update_settings(settings, last_checked_text, releases_url):
-    """Show update settings. Returns (action, new_settings)."""
+def plugin_settings(settings, last_checked_text, releases_url):
+    """Show plugin settings. Returns (action, new_settings)."""
     QtCore, QtGui, QtWidgets = _qt_full()
     new_settings = dict(settings)
     state = {
@@ -162,27 +162,77 @@ def update_settings(settings, last_checked_text, releases_url):
     }
 
     dlg = QtWidgets.QDialog(_parent())
-    dlg.setWindowTitle("Universal SPP Update Settings")
-    dlg.setMinimumWidth(430)
+    dlg.setWindowTitle("Universal SPP Plugin Settings")
+    dlg.setMinimumWidth(470)
 
     layout = QtWidgets.QVBoxLayout(dlg)
     layout.setContentsMargins(18, 16, 18, 16)
     layout.setSpacing(10)
 
+    raster_group = QtWidgets.QGroupBox("Rasterization")
+    raster_form = QtWidgets.QFormLayout(raster_group)
+
+    raster_enabled_cb = QtWidgets.QCheckBox("Capture raster fallbacks when saving")
+    raster_enabled_cb.setChecked(bool(settings.get("raster_capture_enabled", True)))
+    raster_form.addRow(raster_enabled_cb)
+
+    depth_combo = QtWidgets.QComboBox()
+    depth_combo.addItem("Match source channel", "source")
+    depth_combo.addItem("8-bit", "8")
+    depth_combo.addItem("16-bit", "16")
+    depth_index = depth_combo.findData(settings.get("raster_content_bit_depth", "source"))
+    depth_combo.setCurrentIndex(max(0, depth_index))
+    raster_form.addRow("Content bit depth:", depth_combo)
+
+    padding_combo = QtWidgets.QComboBox()
+    padding_combo.addItem("Transparent", "transparent")
+    padding_combo.addItem("Infinite", "infinite")
+    padding_index = padding_combo.findData(settings.get("raster_padding", "transparent"))
+    padding_combo.setCurrentIndex(max(0, padding_index))
+    raster_form.addRow("Padding:", padding_combo)
+
+    budget_spin = QtWidgets.QSpinBox()
+    budget_spin.setRange(64, 4096)
+    budget_spin.setSingleStep(64)
+    budget_spin.setSuffix(" MB")
+    budget_spin.setValue(int(settings.get("raster_budget_mb", 512)))
+    raster_form.addRow("Archive budget:", budget_spin)
+
+    timeout_spin = QtWidgets.QSpinBox()
+    timeout_spin.setRange(5, 300)
+    timeout_spin.setSuffix(" seconds")
+    timeout_spin.setValue(int(settings.get("raster_evaluation_timeout_seconds", 30)))
+    raster_form.addRow("Painter evaluation timeout:", timeout_spin)
+
+    keep_failed_cb = QtWidgets.QCheckBox("Keep failed capture diagnostics")
+    keep_failed_cb.setChecked(bool(settings.get("keep_failed_raster_captures", True)))
+    raster_form.addRow(keep_failed_cb)
+
+    def set_raster_controls_enabled(enabled):
+        for widget in (depth_combo, padding_combo, budget_spin, timeout_spin, keep_failed_cb):
+            widget.setEnabled(enabled)
+
+    raster_enabled_cb.toggled.connect(set_raster_controls_enabled)
+    set_raster_controls_enabled(raster_enabled_cb.isChecked())
+    layout.addWidget(raster_group)
+
+    update_group = QtWidgets.QGroupBox("Updates")
+    update_layout = QtWidgets.QVBoxLayout(update_group)
+
     auto_cb = QtWidgets.QCheckBox("Automatically check for updates daily")
     auto_cb.setChecked(bool(settings.get("auto_check_enabled", True)))
-    layout.addWidget(auto_cb)
+    update_layout.addWidget(auto_cb)
 
     prerelease_cb = QtWidgets.QCheckBox("Include prerelease versions")
     prerelease_cb.setChecked(bool(settings.get("include_prereleases", False)))
-    layout.addWidget(prerelease_cb)
+    update_layout.addWidget(prerelease_cb)
 
     last_checked = QtWidgets.QLabel(f"Last checked: {last_checked_text}")
-    layout.addWidget(last_checked)
+    update_layout.addWidget(last_checked)
 
     skipped_text = state["skipped_version"] or "None"
     skipped_label = QtWidgets.QLabel(f"Skipped version: {skipped_text}")
-    layout.addWidget(skipped_label)
+    update_layout.addWidget(skipped_label)
 
     clear_skip_btn = QtWidgets.QPushButton("Clear Skipped Version")
     clear_skip_btn.setEnabled(bool(state["skipped_version"]))
@@ -193,7 +243,8 @@ def update_settings(settings, last_checked_text, releases_url):
         clear_skip_btn.setEnabled(False)
 
     clear_skip_btn.clicked.connect(clear_skip)
-    layout.addWidget(clear_skip_btn)
+    update_layout.addWidget(clear_skip_btn)
+    layout.addWidget(update_group)
 
     buttons = QtWidgets.QHBoxLayout()
     check_btn = QtWidgets.QPushButton("Check Now")
@@ -209,6 +260,12 @@ def update_settings(settings, last_checked_text, releases_url):
         new_settings["auto_check_enabled"] = auto_cb.isChecked()
         new_settings["include_prereleases"] = prerelease_cb.isChecked()
         new_settings["skipped_version"] = state["skipped_version"]
+        new_settings["raster_capture_enabled"] = raster_enabled_cb.isChecked()
+        new_settings["raster_content_bit_depth"] = depth_combo.currentData()
+        new_settings["raster_padding"] = padding_combo.currentData()
+        new_settings["raster_budget_mb"] = budget_spin.value()
+        new_settings["raster_evaluation_timeout_seconds"] = timeout_spin.value()
+        new_settings["keep_failed_raster_captures"] = keep_failed_cb.isChecked()
         state["action"] = action
         dlg.accept()
 

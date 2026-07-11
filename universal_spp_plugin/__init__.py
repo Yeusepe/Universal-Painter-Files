@@ -292,24 +292,33 @@ def _wait_for_painter_evaluation(timeout_ms=30000):
         raise RuntimeError("Painter did not finish evaluating the temporary mask channel.")
 
 
-def _capture_raster_js(plan_path, manifest_path):
+def _capture_raster_js(plan_path, manifest_path, raster_settings):
     preparation_path = os.path.join(os.path.dirname(manifest_path), "preparation.json")
+    options_path = os.path.join(os.path.dirname(manifest_path), "capture_options.json")
+    with open(options_path, "w", encoding="utf-8") as f:
+        json.dump({
+            "content_bit_depth": raster_settings["raster_content_bit_depth"],
+            "padding": raster_settings["raster_padding"],
+        }, f)
     _raster_js_call(
         "prepareCapture({}, {});".format(
             json.dumps(_js_path(plan_path)), json.dumps(_js_path(preparation_path))
         )
     )
     try:
-        _wait_for_painter_evaluation()
+        _wait_for_painter_evaluation(
+            timeout_ms=raster_settings["raster_evaluation_timeout_seconds"] * 1000
+        )
         executable = version.running_binary()
         if not executable:
             raise RuntimeError("Could not locate the running Painter executable for raster capture.")
         with legacy_uv_export.temporary_guard_bypass(executable):
             result = _raster_js_call(
-                "capture({}, {}, {});".format(
+                "capture({}, {}, {}, {});".format(
                     json.dumps(_js_path(plan_path)),
                     json.dumps(_js_path(manifest_path)),
                     json.dumps(_js_path(preparation_path)),
+                    json.dumps(_js_path(options_path)),
                 )
             )
     except Exception:
@@ -324,7 +333,7 @@ def _capture_raster_js(plan_path, manifest_path):
     return result
 
 
-def _run_capture_with_dialog(plan_path, manifest_path):
+def _run_capture_with_dialog(plan_path, manifest_path, raster_settings):
     dlg = QtWidgets.QProgressDialog("Capturing raster fallback pixels...", None, 0, 0, _parent())
     dlg.setWindowTitle("Universal SPP")
     dlg.setWindowModality(QtCore.Qt.ApplicationModal)
@@ -335,15 +344,19 @@ def _run_capture_with_dialog(plan_path, manifest_path):
     if app:
         app.processEvents()
     try:
-        return _capture_raster_js(plan_path, manifest_path)
+        return _capture_raster_js(plan_path, manifest_path, raster_settings)
     finally:
         dlg.close()
         dlg.deleteLater()
 
 
-def _raster_capture_for_pack(spp):
+def _raster_capture_for_pack(spp, settings=None):
     """Return a capture directory for pack --raster-capture-dir, or None if no
     raster fallbacks are required. Raises if required fallbacks cannot be captured."""
+    settings = updater._clean_settings(settings or updater.load_settings())
+    if not settings["raster_capture_enabled"]:
+        return None
+    keep_failed = settings["keep_failed_raster_captures"]
     os.makedirs(_CACHE, exist_ok=True)
     capture_dir = tempfile.mkdtemp(prefix="raster_capture_", dir=_CACHE)
     plan_path = os.path.join(capture_dir, "plan.json")
@@ -358,7 +371,12 @@ def _raster_capture_for_pack(spp):
     if not requests:
         shutil.rmtree(capture_dir, ignore_errors=True)
         return None
-    _run_capture_with_dialog(plan_path, manifest_path)
+    try:
+        _run_capture_with_dialog(plan_path, manifest_path, settings)
+    except Exception:
+        if not keep_failed:
+            shutil.rmtree(capture_dir, ignore_errors=True)
+        raise
     manifest = _load_json_file(manifest_path)
     have = {a.get("request_id") for a in manifest.get("assets") or [] if a.get("request_id")}
     missing = [r.get("id") for r in requests if r.get("id") not in have]
@@ -369,7 +387,10 @@ def _raster_capture_for_pack(spp):
             detail.append(f"{len(missing)} fallback request(s) had no captured pixels")
         if warnings:
             detail.extend(warnings[:5])
-        detail.append(f"Capture diagnostics were kept at {capture_dir}")
+        if keep_failed:
+            detail.append(f"Capture diagnostics were kept at {capture_dir}")
+        else:
+            shutil.rmtree(capture_dir, ignore_errors=True)
         raise RuntimeError("Could not capture every required raster fallback.\n" + "\n".join(detail))
     _log(f"captured {len(manifest.get('assets') or [])} raster fallback asset(s)")
     return capture_dir
@@ -539,9 +560,15 @@ def on_save():
             if not out:
                 return
             capture_dir = None
+            settings = updater.load_settings()
             try:
-                capture_dir = _raster_capture_for_pack(spp)
-                argv, env = runner.pack_args(spp, out, raster_capture_dir=capture_dir)
+                capture_dir = _raster_capture_for_pack(spp, settings=settings)
+                argv, env = runner.pack_args(
+                    spp,
+                    out,
+                    raster_capture_dir=capture_dir,
+                    raster_budget_mb=settings["raster_budget_mb"],
+                )
                 ok, err = progress.run_with_progress(_parent(), "Saving Universal Project", argv, env)
                 if ok:
                     dialogs.info(f"Saved Universal project:\n{out}")
@@ -660,9 +687,9 @@ def on_check_updates():
     _check_for_updates(manual=True)
 
 
-def on_update_settings():
+def on_plugin_settings():
     settings = updater.load_settings()
-    action, settings = dialogs.update_settings(
+    action, settings = dialogs.plugin_settings(
         settings,
         updater.format_last_checked(settings),
         updater.RELEASES_PAGE_URL,
@@ -700,9 +727,9 @@ def start_plugin():
     _menu.addSeparator()
     a_check_updates = _menu.addAction("Check for Updates...")
     a_check_updates.triggered.connect(on_check_updates)
-    a_update_settings = _menu.addAction("Update Settings...")
-    a_update_settings.triggered.connect(on_update_settings)
-    _actions = [a_open, a_save, a_check_updates, a_update_settings]
+    a_plugin_settings = _menu.addAction("Plugin Settings...")
+    a_plugin_settings.triggered.connect(on_plugin_settings)
+    _actions = [a_open, a_save, a_check_updates, a_plugin_settings]
     sp_ui.add_menu(_menu)
     global _file_action
     try:

@@ -127,11 +127,13 @@ def raster_plan_args(spp, out_plan, targets="all-lower"):
     return _argv("raster-plan", spp, "--targets", targets, "-o", out_plan), {}
 
 
-def pack_args(spp, out_uspp, raster_capture_dir=None):
+def pack_args(spp, out_uspp, raster_capture_dir=None, raster_budget_mb=None):
     """(argv, env) to write the universal .uspp from a saved .spp."""
     argv = _argv("pack", spp, "-o", out_uspp)
     if raster_capture_dir:
         argv.extend(["--raster-capture-dir", raster_capture_dir])
+        if raster_budget_mb is not None:
+            argv.extend(["--raster-budget-mb", str(int(raster_budget_mb))])
     return argv, {}
 
 

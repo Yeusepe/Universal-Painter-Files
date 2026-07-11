@@ -32,6 +32,12 @@ DEFAULT_SETTINGS = {
     "include_prereleases": False,
     "skipped_version": "",
     "last_checked": 0.0,
+    "raster_capture_enabled": True,
+    "raster_content_bit_depth": "source",
+    "raster_padding": "transparent",
+    "raster_budget_mb": 512,
+    "raster_evaluation_timeout_seconds": 30,
+    "keep_failed_raster_captures": True,
 }
 
 
@@ -102,6 +108,24 @@ def _clean_settings(data):
     settings["auto_check_enabled"] = bool(settings.get("auto_check_enabled"))
     settings["include_prereleases"] = bool(settings.get("include_prereleases"))
     settings["skipped_version"] = normalize_version(settings.get("skipped_version") or "")
+    settings["raster_capture_enabled"] = bool(settings.get("raster_capture_enabled"))
+    depth = str(settings.get("raster_content_bit_depth") or "source").lower()
+    settings["raster_content_bit_depth"] = depth if depth in ("source", "8", "16") else "source"
+    padding = str(settings.get("raster_padding") or "transparent").lower()
+    settings["raster_padding"] = padding if padding in ("transparent", "infinite") else "transparent"
+    settings["keep_failed_raster_captures"] = bool(
+        settings.get("keep_failed_raster_captures")
+    )
+    try:
+        budget = int(settings.get("raster_budget_mb") or 512)
+    except (TypeError, ValueError):
+        budget = 512
+    settings["raster_budget_mb"] = max(64, min(4096, budget))
+    try:
+        timeout = int(settings.get("raster_evaluation_timeout_seconds") or 30)
+    except (TypeError, ValueError):
+        timeout = 30
+    settings["raster_evaluation_timeout_seconds"] = max(5, min(300, timeout))
     try:
         settings["last_checked"] = float(settings.get("last_checked") or 0.0)
     except (TypeError, ValueError):

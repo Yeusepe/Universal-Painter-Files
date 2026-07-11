@@ -14,8 +14,14 @@ class RasterCaptureCompanionTests(unittest.TestCase):
         self.assertIn('_save([uid, "mask"]', source)
         self.assertIn("prepareCapture(planPath, preparationPath)", source)
         self.assertIn('texturesets.addChannel(entry.material, "blendingmask", "L8")', source)
-        self.assertIn("capture(planPath, manifestPath, preparationPath)", source)
+        self.assertIn("capture(planPath, manifestPath, preparationPath, optionsPath)", source)
         self.assertIn("_removePreparedChannels(preparationPath, warnings)", source)
+
+    def test_capture_options_control_padding_and_bit_depth(self):
+        source = CAPTURE_JS.read_text(encoding="utf-8")
+        self.assertIn('_captureOptions.padding === "infinite"', source)
+        self.assertIn("_captureOptions.content_bit_depth", source)
+        self.assertIn("capture(planPath, manifestPath, preparationPath, optionsPath)", source)
 
 
 if __name__ == "__main__":

@@ -94,6 +94,36 @@ class SettingsTests(unittest.TestCase):
         settings["auto_check_enabled"] = False
         self.assertFalse(updater.should_auto_check(settings, now=999999))
 
+    def test_raster_settings_are_normalized_and_bounded(self):
+        settings = updater._clean_settings({
+            "raster_capture_enabled": 0,
+            "raster_content_bit_depth": 16,
+            "raster_padding": "INFINITE",
+            "raster_budget_mb": 99999,
+            "raster_evaluation_timeout_seconds": 1,
+            "keep_failed_raster_captures": 0,
+        })
+
+        self.assertFalse(settings["raster_capture_enabled"])
+        self.assertEqual(settings["raster_content_bit_depth"], "16")
+        self.assertEqual(settings["raster_padding"], "infinite")
+        self.assertEqual(settings["raster_budget_mb"], 4096)
+        self.assertEqual(settings["raster_evaluation_timeout_seconds"], 5)
+        self.assertFalse(settings["keep_failed_raster_captures"])
+
+    def test_invalid_raster_choices_fall_back_to_defaults(self):
+        settings = updater._clean_settings({
+            "raster_content_bit_depth": "32",
+            "raster_padding": "smear",
+            "raster_budget_mb": "invalid",
+            "raster_evaluation_timeout_seconds": "invalid",
+        })
+
+        self.assertEqual(settings["raster_content_bit_depth"], "source")
+        self.assertEqual(settings["raster_padding"], "transparent")
+        self.assertEqual(settings["raster_budget_mb"], 512)
+        self.assertEqual(settings["raster_evaluation_timeout_seconds"], 30)
+
 
 class ZipValidationTests(unittest.TestCase):
     def test_validates_good_zip_and_checksum(self):

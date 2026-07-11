@@ -21,12 +21,15 @@ class PluginRunnerTests(unittest.TestCase):
     def test_pack_args_can_include_raster_capture_dir(self):
         runner = load_runner()
         with mock.patch.dict(os.environ, {"USPP_TOOL": "C:/tools/uspp_tool.py"}):
-            argv, env = runner.pack_args("in.spp", "out.uspp", raster_capture_dir="capture")
+            argv, env = runner.pack_args(
+                "in.spp", "out.uspp", raster_capture_dir="capture", raster_budget_mb=256
+            )
 
         self.assertEqual(argv[:2], [sys.executable, "C:/tools/uspp_tool.py"])
         self.assertEqual(argv[2:], [
             "pack", "in.spp", "-o", "out.uspp",
             "--raster-capture-dir", "capture",
+            "--raster-budget-mb", "256",
         ])
         self.assertEqual(env, {})
 

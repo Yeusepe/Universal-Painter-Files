@@ -236,6 +236,10 @@ def cmd_pack(args):
         args.output,
         extra_manifest=extra,
         raster_capture_dir=getattr(args, "raster_capture_dir", None),
+        raster_budget_bytes=(
+            int(args.raster_budget_mb) * 1024 * 1024
+            if getattr(args, "raster_budget_mb", None) is not None else None
+        ),
     )
     print(f"packed -> {args.output}")
     return 0
@@ -414,7 +418,7 @@ def main():
     ap.add_argument("-v", "--verbose", action="store_true")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("pack"); p.add_argument("input"); p.add_argument("-o", "--output", required=True); p.add_argument("--raster-capture-dir"); p.set_defaults(fn=cmd_pack)
+    p = sub.add_parser("pack"); p.add_argument("input"); p.add_argument("-o", "--output", required=True); p.add_argument("--raster-capture-dir"); p.add_argument("--raster-budget-mb", type=int); p.set_defaults(fn=cmd_pack)
     p = sub.add_parser("raster-plan"); p.add_argument("input"); p.add_argument("--targets", default="all-lower"); p.add_argument("-o", "--output"); p.set_defaults(fn=cmd_raster_plan)
     p = sub.add_parser("plan"); p.add_argument("--uspp", required=True); p.add_argument("--target", required=True); p.set_defaults(fn=cmd_plan)
     p = sub.add_parser("build"); p.add_argument("--uspp", required=True); p.add_argument("--target", required=True); p.add_argument("-o", "--output", required=True); p.set_defaults(fn=cmd_build)

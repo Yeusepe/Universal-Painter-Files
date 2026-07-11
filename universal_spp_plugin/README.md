@@ -12,8 +12,7 @@ The plugin keeps the UI small on purpose:
   plans the conversion for the running Painter version, shows any lossy
   downgrade warning, builds a temporary `.spp`, and opens that copy.
 - **Check for Updates...** checks GitHub Releases for a newer plugin build.
-- **Update Settings...** controls daily update checks, prerelease checks, and
-  skipped update reminders.
+- **Plugin Settings...** configures raster fallback capture and update checks.
 
 The plugin does not contain the conversion logic itself. It is a thin Qt/Painter
 integration layer over `bin/uspp_tool.exe`.
@@ -91,7 +90,7 @@ If the `.uspp` was authored in an older version than the one you are running,
 the converter rebuilds the stored project and lets Painter perform its normal
 native upgrade when opening it.
 
-### Check for updates
+### Plugin settings and updates
 
 Choose **Universal > Check for Updates...** to check the public GitHub Releases
 page manually. If a newer release is available, the plugin asks before
@@ -102,7 +101,16 @@ checks only show a prompt; Universal SPP never installs silently. The prompt can
 install the update, skip that specific version, remind you later, or turn off
 automatic update checks.
 
-Choose **Universal > Update Settings...** to:
+Choose **Universal > Plugin Settings...** to configure rasterization:
+
+- Enable or disable raster fallback capture when saving.
+- Match the source channel bit depth or force 8-bit/16-bit content captures.
+- Use transparent or infinite capture padding.
+- Set the raster asset budget stored in each `.uspp`.
+- Set how long Painter may evaluate temporary mask channels.
+- Keep or discard failed capture diagnostics.
+
+The same dialog also configures updates:
 
 - Enable or disable daily update checks.
 - Include or exclude prerelease versions.
