@@ -1,5 +1,4 @@
-# The plugin runs uspp_tool.exe from this folder.
-# It is not committed (44 MB). Get it one of two ways:
-#   - Download from the GitHub Releases page and drop uspp_tool.exe here, or
-#   - Build it: run  build.ps1  at the repo root.
+# The plugin runs the native converter from this folder: uspp_tool.exe on Windows,
+# uspp_tool on Linux. It is not committed. Download the matching release payload,
+# run build.ps1 on Windows, or run ./build.sh on Linux.
 # Override the location with the USPP_TOOL env var (see ../lib/runner.py).

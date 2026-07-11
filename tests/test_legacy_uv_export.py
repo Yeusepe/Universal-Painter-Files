@@ -46,6 +46,13 @@ def synthetic_painter_exe(guard=b"\x74\x7e"):
 
 
 class LegacyUvExportTests(unittest.TestCase):
+    def test_non_pe_bypass_can_be_optional_for_linux(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "Adobe Substance 3D Painter"
+            path.write_bytes(b"\x7fELF")
+            with legacy.temporary_guard_bypass(str(path), required=False) as patched:
+                self.assertFalse(patched)
+
     def test_finds_guard_from_pe_string_reference(self):
         payload, expected_rva = synthetic_painter_exe()
         with tempfile.TemporaryDirectory() as td:

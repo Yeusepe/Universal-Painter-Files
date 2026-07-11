@@ -4,6 +4,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 import zipfile
 
 
@@ -55,10 +56,35 @@ class ReleaseParsingTests(unittest.TestCase):
                 }
             ],
         }
-        info = updater.update_info_from_release(release)
+        with mock.patch.object(updater.platform, "system", return_value="Windows"), \
+                mock.patch.object(updater.platform, "machine", return_value="AMD64"):
+            info = updater.update_info_from_release(release)
         self.assertEqual(info.version, "0.1.8")
         self.assertEqual(info.asset_name, "universal_spp_plugin-0.1.8.zip")
         self.assertEqual(info.sha256, sha.lower())
+
+    def test_linux_selects_tagged_asset_and_rejects_windows_fallback(self):
+        release = {
+            "tag_name": "v0.2.0",
+            "assets": [
+                {"name": "universal_spp_plugin-0.2.0.zip", "browser_download_url": "win"},
+                {
+                    "name": "universal_spp_plugin-0.2.0-linux-x86_64.zip",
+                    "browser_download_url": "linux",
+                },
+            ],
+        }
+        with mock.patch.object(updater.platform, "system", return_value="Linux"), \
+                mock.patch.object(updater.platform, "machine", return_value="x86_64"):
+            info = updater.update_info_from_release(release)
+        self.assertEqual(info.asset_name, "universal_spp_plugin-0.2.0-linux-x86_64.zip")
+        self.assertEqual(info.download_url, "linux")
+
+        release["assets"] = release["assets"][:1]
+        with mock.patch.object(updater.platform, "system", return_value="Linux"), \
+                mock.patch.object(updater.platform, "machine", return_value="x86_64"), \
+                self.assertRaises(updater.UpdateError):
+            updater.update_info_from_release(release)
 
     def test_missing_release_asset_is_an_error(self):
         release = {"tag_name": "v0.1.8", "assets": []}
@@ -76,6 +102,11 @@ class ReleaseParsingTests(unittest.TestCase):
 
 
 class SettingsTests(unittest.TestCase):
+    def test_linux_settings_follow_xdg_config_home(self):
+        with mock.patch.object(updater.sys, "platform", "linux"), \
+                mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": "/tmp/xdg"}, clear=True):
+            self.assertEqual(updater.settings_dir(), os.path.join("/tmp/xdg", "universal-spp"))
+
     def test_daily_check_throttling_and_persistence(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "settings.json")
@@ -126,6 +157,19 @@ class SettingsTests(unittest.TestCase):
 
 
 class ZipValidationTests(unittest.TestCase):
+    def test_linux_converter_is_marked_executable_after_extract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            zip_path = os.path.join(tmp, "linux.zip")
+            make_zip(zip_path, {
+                "universal_spp_plugin/__init__.py": "# plugin\n",
+                "universal_spp_plugin/bin/uspp_tool": "binary",
+            })
+            dest = os.path.join(tmp, "dest")
+            with mock.patch.object(updater.sys, "platform", "linux"), \
+                    mock.patch.object(updater.os, "chmod") as chmod:
+                updater.safe_extract(zip_path, dest)
+            chmod.assert_called_once()
+
     def test_validates_good_zip_and_checksum(self):
         with tempfile.TemporaryDirectory() as tmp:
             zip_path = os.path.join(tmp, "good.zip")

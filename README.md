@@ -1,5 +1,10 @@
 > [!NOTE]
 > This is still being tested. If you have a Painter file that does not seem to be working, join our Discord: https://discord.gg/2cEmTJf7Jb
+>
+> Native Linux support is experimental. The converter and normal plugin workflow are
+> supported by the source tree, but Linux Painter raster fallback capture still needs
+> real-world testing, especially for legacy UV-tile projects. See issue
+> [#1](https://github.com/Yeusepe/Universal-Painter-Files/issues/1).
 
 ![Universal SPP](https://github.com/user-attachments/assets/bb142dec-652b-4973-943e-3b731e8f1225)
 ---
@@ -43,6 +48,7 @@ The plugin shows a loss report before a lossy downgrade is built.
 | [`universal_spp_plugin/`](universal_spp_plugin/README.md) | The Painter plugin. It adds a **Universal** menu for saving `.uspp` files and opening `.uspp` or `.spp` files inside Painter. |
 | [`spp_downgrader/`](spp_downgrader/README.md) | The conversion engine and command line tool. It can pack, inspect, plan, and build projects without launching Painter. |
 | [`build.ps1`](build.ps1) | Builds `uspp_tool.exe` with PyInstaller and stages it into `universal_spp_plugin/bin/`. |
+| [`build.sh`](build.sh) | Builds the native Linux `uspp_tool` with PyInstaller and stages it into the plugin. |
 
 Supported profile chain:
 
@@ -58,13 +64,14 @@ collapses those steps into one effective migration.
 
 Use this path if you want the menu inside Painter.
 
-1. Download the latest `universal_spp_plugin.zip` release from the
+1. Download the latest release archive for your platform from the
    [Releases](../../releases) page.
 2. Open Adobe Substance 3D Painter.
 3. Go to **Python > Plugins Folder**. This opens the correct plugin directory for
-   your machine, usually `Documents\Adobe\Adobe Substance 3D Painter\python\plugins`.
+   your machine.
 4. Extract the release so the plugin root is directly inside `plugins`.
-5. Make sure `universal_spp_plugin/bin/uspp_tool.exe` exists.
+5. Make sure `universal_spp_plugin/bin/uspp_tool.exe` exists on Windows or
+   `universal_spp_plugin/bin/uspp_tool` exists and is executable on Linux.
 6. Go to **Python > Reload Plugins Folder**, or restart Painter.
 7. Enable `universal_spp_plugin` from the **Python** menu if Painter did not
    enable it automatically.
@@ -180,8 +187,8 @@ More engine detail is in
 
 ## Build From Source
 
-The plugin calls `universal_spp_plugin/bin/uspp_tool.exe`. Client machines do not
-need Python when that executable is present. To build it yourself on Windows:
+The plugin calls the native converter in `universal_spp_plugin/bin/`. Client
+machines do not need Python when that executable is present. To build it on Windows:
 
 ```powershell
 git clone <your-fork-url> universal-spp
@@ -199,15 +206,36 @@ result to:
 universal_spp_plugin/bin/uspp_tool.exe
 ```
 
+On Linux, build with a native Python environment. PyInstaller does not cross-compile:
+
+```bash
+sudo apt-get install binutils
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+./build.sh
+./universal_spp_plugin/bin/uspp_tool --help
+```
+
+Build release binaries on the oldest Linux distribution you intend to support,
+because a PyInstaller binary inherits its builder's glibc baseline. Linux release
+archives use a platform tag such as
+`universal_spp_plugin-<version>-linux-x86_64.zip`.
+
 ## Requirements
 
-- Windows.
+- Windows, or experimental native Linux Painter (x86-64).
 - Python 3.11 or newer for source use.
 - Runtime Python packages: `h5py`, `numpy`, `mmh3`, `PyYAML`.
 - Maintainer and build packages: `pyinstaller`, `py7zr`, `minidump`.
 
 The plugin itself is a normal Painter Python plugin. It does not use admin
-rights, DLL injection, or background services.
+rights, Linux capabilities, DLL injection, or background services.
+
+On Linux, `.uspp` file association is not installed automatically; open files
+through the **Universal** menu. The Windows-only legacy UV-tile guard bypass is
+skipped, so projects that depend on that workaround may fail raster capture and
+should be reported on issue #1 with the Painter version and distribution.
 
 ## Safety Model
 
@@ -233,7 +261,8 @@ The safest habit is:
 universal-spp/
 |-- spp_downgrader/        # conversion engine, CLI, profiles, debug tools
 |-- universal_spp_plugin/  # Painter plugin and bundled converter location
-|-- build.ps1              # builds and stages uspp_tool.exe
+|-- build.ps1              # builds and stages the Windows converter
+|-- build.sh               # builds and stages the Linux converter
 |-- requirements.txt       # runtime dependencies
 |-- requirements-dev.txt   # build and maintainer dependencies
 |-- NOTICE.md              # trademark and usage notices

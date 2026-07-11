@@ -18,6 +18,17 @@ def load_runner():
 
 
 class PluginRunnerTests(unittest.TestCase):
+    def test_bundled_tool_name_is_platform_native(self):
+        runner = load_runner()
+        self.assertEqual(runner.tool_filename("nt"), "uspp_tool.exe")
+        self.assertEqual(runner.tool_filename("posix"), "uspp_tool")
+
+    def test_linux_default_path_has_no_exe_suffix(self):
+        runner = load_runner()
+        with mock.patch.dict(os.environ, {}, clear=True), \
+                mock.patch.object(runner.os, "name", "posix"):
+            self.assertEqual(os.path.basename(runner.tool_path()), "uspp_tool")
+
     def test_pack_args_can_include_raster_capture_dir(self):
         runner = load_runner()
         with mock.patch.dict(os.environ, {"USPP_TOOL": "C:/tools/uspp_tool.py"}):
