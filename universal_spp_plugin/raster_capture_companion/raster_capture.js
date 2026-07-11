@@ -226,6 +226,21 @@ function _captureLayerChannels(req, uid, index, outDir, assets, cache) {
   }
 }
 
+function _captureMask(req, uid, index, outDir, assets, cache) {
+  var maskEntry = index.byUid[String(uid)]
+  if (!maskEntry) {
+    throw new Error("mask layer uid " + uid + " was not found")
+  }
+  var maskKey = "mask|" + uid
+  if (cache[maskKey] === undefined) {
+    var maskName = _safe("mask_" + uid + ".png")
+    // A synthetic blendingmask channel shadows the real layer mask with black.
+    _save([uid, "mask"], outDir + maskName, _exportConfig("mask"))
+    cache[maskKey] = {path: maskName, kind: "mask", mime: "image/png"}
+  }
+  assets.push(_assetFromCached(cache[maskKey], req))
+}
+
 function _hasChannel(channels, wanted) {
   wanted = String(wanted).toLowerCase()
   for (var i = 0; i < channels.length; ++i) {
@@ -236,21 +251,61 @@ function _hasChannel(channels, wanted) {
   return false
 }
 
-function _ensureBlendingMask(entry, added) {
-  if (added[entry.material]) {
-    return
-  }
-  var stackPath = entry.stack && entry.stack !== entry.material
+function _stackPath(entry) {
+  return entry.stack && entry.stack !== entry.material
     ? [entry.material, entry.stack]
     : entry.material
-  var channels = alg.mapexport.channelIdentifiers(stackPath)
-  if (!_hasChannel(channels, "blendingmask")) {
-    alg.texturesets.addChannel(entry.material, "blendingmask", "L8")
-    added[entry.material] = true
+}
+
+function prepareCapture(planPath, preparationPath) {
+  var plan = _readJson(planPath)
+  var index = _indexDocument()
+  var requests = plan.requests || []
+  var needed = {}
+  var added = []
+
+  for (var i = 0; i < requests.length; ++i) {
+    var req = requests[i]
+    if (req.kind !== "mask" && req.scope !== "effect_overlay") {
+      continue
+    }
+    var uid = req.layer_uid
+    var entry = index.byUid[String(uid)]
+    if (!entry || needed[entry.material]) {
+      continue
+    }
+    needed[entry.material] = true
+    var channels = alg.mapexport.channelIdentifiers(_stackPath(entry))
+    if (!_hasChannel(channels, "blendingmask")) {
+      alg.texturesets.addChannel(entry.material, "blendingmask", "L8")
+      added.push(entry.material)
+    }
+  }
+
+  _writeJson(preparationPath, {added_materials: added})
+}
+
+function _removePreparedChannels(preparationPath, warnings) {
+  var preparation = _readJson(preparationPath)
+  var added = preparation.added_materials || []
+  for (var i = 0; i < added.length; ++i) {
+    try {
+      alg.texturesets.removeChannel(added[i], "blendingmask")
+    } catch (e) {
+      if (warnings) {
+        warnings.push(
+          "failed to remove temporary blending mask from " + added[i] + ": " + e.message
+        )
+      }
+    }
   }
 }
 
-function capture(planPath, manifestPath) {
+function cleanupCapture(preparationPath) {
+  _removePreparedChannels(preparationPath, null)
+}
+
+function capture(planPath, manifestPath, preparationPath) {
   var plan = _readJson(planPath)
   var index = _indexDocument()
   var outDir = _dir(manifestPath)
@@ -258,7 +313,6 @@ function capture(planPath, manifestPath) {
   var warnings = []
   var requests = plan.requests || []
   var cache = {}
-  var addedBlendingMasks = {}
 
   try {
     for (var i = 0; i < requests.length; ++i) {
@@ -269,22 +323,14 @@ function capture(planPath, manifestPath) {
 
       try {
         if (req.kind === "mask" && uid !== null && uid !== undefined) {
-          var maskEntry = index.byUid[String(uid)]
-          if (!maskEntry) {
-            throw new Error("mask layer uid " + uid + " was not found")
-          }
-          _ensureBlendingMask(maskEntry, addedBlendingMasks)
-          var maskKey = "mask|" + uid
-          if (cache[maskKey] === undefined) {
-            var maskName = _safe("mask_" + uid + ".png")
-            _save([uid, "mask"], outDir + maskName, _exportConfig("mask"))
-            cache[maskKey] = {path: maskName, kind: "mask", mime: "image/png"}
-          }
-          assets.push(_assetFromCached(cache[maskKey], req))
+          _captureMask(req, uid, index, outDir, assets, cache)
           // UV-tile masks cannot be attached independently in the v8 graph.
           // Capture the same layer's content so the builder can wrap exact
           // per-tile content+mask proxies while the original graph stays in USPP.
           _captureLayerChannels(req, uid, index, outDir, assets, cache)
+        } else if (req.scope === "effect_overlay") {
+          _captureStackChannels(req, index, outDir, assets, cache)
+          _captureMask(req, req.layer_uid, index, outDir, assets, cache)
         } else if (req.scope === "full_stack_channel") {
           _captureStackChannels(req, index, outDir, assets, cache)
         } else if (uid !== null && uid !== undefined && index.byUid[String(uid)]) {
@@ -297,13 +343,7 @@ function capture(planPath, manifestPath) {
       }
     }
   } finally {
-    for (var material in addedBlendingMasks) {
-      try {
-        alg.texturesets.removeChannel(material, "blendingmask")
-      } catch (e) {
-        warnings.push("failed to remove temporary blending mask from " + material + ": " + e.message)
-      }
-    }
+    _removePreparedChannels(preparationPath, warnings)
   }
 
   _writeJson(manifestPath, {

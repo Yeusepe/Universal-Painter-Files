@@ -238,7 +238,7 @@ def _js_path(path):
     return os.path.abspath(path).replace("\\", "/")
 
 
-def _capture_raster_js(plan_path, manifest_path):
+def _raster_js_call(invocation):
     try:
         import substance_painter.js as sp_js
     except Exception as e:
@@ -249,15 +249,77 @@ def _capture_raster_js(plan_path, manifest_path):
         "(function(){\n"
         + script
         + "\n"
-        + "capture(" + json.dumps(_js_path(plan_path)) + ", " + json.dumps(_js_path(manifest_path)) + ");\n"
+        + invocation
+        + "\n"
         + "return {ok:true};\n"
         + "})()"
     )
-    executable = version.running_binary()
-    if not executable:
-        raise RuntimeError("Could not locate the running Painter executable for raster capture.")
-    with legacy_uv_export.temporary_guard_bypass(executable):
-        result = sp_js.evaluate(code)
+    return sp_js.evaluate(code)
+
+
+def _wait_for_painter_evaluation(timeout_ms=30000):
+    loop = QtCore.QEventLoop()
+    state = {"done": False, "timed_out": False}
+
+    def finish():
+        state["done"] = True
+        if loop.isRunning():
+            loop.quit()
+
+    def evaluated():
+        QtCore.QTimer.singleShot(250, finish)
+
+    def timed_out():
+        state["timed_out"] = True
+        finish()
+
+    def arm():
+        execute_when_not_busy = getattr(sp_project, "execute_when_not_busy", None)
+        if execute_when_not_busy:
+            execute_when_not_busy(evaluated)
+        else:
+            QtCore.QTimer.singleShot(1000, finish)
+
+    timeout = QtCore.QTimer(loop)
+    timeout.setSingleShot(True)
+    timeout.timeout.connect(timed_out)
+    timeout.start(timeout_ms)
+    QtCore.QTimer.singleShot(0, arm)
+    if not state["done"]:
+        run = getattr(loop, "exec", None) or loop.exec_
+        run()
+    if state["timed_out"]:
+        raise RuntimeError("Painter did not finish evaluating the temporary mask channel.")
+
+
+def _capture_raster_js(plan_path, manifest_path):
+    preparation_path = os.path.join(os.path.dirname(manifest_path), "preparation.json")
+    _raster_js_call(
+        "prepareCapture({}, {});".format(
+            json.dumps(_js_path(plan_path)), json.dumps(_js_path(preparation_path))
+        )
+    )
+    try:
+        _wait_for_painter_evaluation()
+        executable = version.running_binary()
+        if not executable:
+            raise RuntimeError("Could not locate the running Painter executable for raster capture.")
+        with legacy_uv_export.temporary_guard_bypass(executable):
+            result = _raster_js_call(
+                "capture({}, {}, {});".format(
+                    json.dumps(_js_path(plan_path)),
+                    json.dumps(_js_path(manifest_path)),
+                    json.dumps(_js_path(preparation_path)),
+                )
+            )
+    except Exception:
+        try:
+            _raster_js_call(
+                "cleanupCapture({});".format(json.dumps(_js_path(preparation_path)))
+            )
+        except Exception as cleanup_error:
+            _log(f"temporary raster channel cleanup failed: {cleanup_error}")
+        raise
     legacy_uv_export.expand_manifest_uv_tiles(manifest_path)
     return result
 
@@ -302,12 +364,12 @@ def _raster_capture_for_pack(spp):
     missing = [r.get("id") for r in requests if r.get("id") not in have]
     warnings = list(manifest.get("warnings") or [])
     if missing or warnings:
-        shutil.rmtree(capture_dir, ignore_errors=True)
         detail = []
         if missing:
             detail.append(f"{len(missing)} fallback request(s) had no captured pixels")
         if warnings:
             detail.extend(warnings[:5])
+        detail.append(f"Capture diagnostics were kept at {capture_dir}")
         raise RuntimeError("Could not capture every required raster fallback.\n" + "\n".join(detail))
     _log(f"captured {len(manifest.get('assets') or [])} raster fallback asset(s)")
     return capture_dir
