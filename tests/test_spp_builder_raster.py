@@ -36,6 +36,43 @@ def png_rgba(r, g, b, a=255):
 
 
 class SPPBuilderRasterTests(unittest.TestCase):
+    def test_modified_small_dataset_clamps_preserved_chunk_to_new_shape(self):
+        raw = b"source project settings payload"
+        rewritten = b"small result"
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            zip_path = base / "in.uspp"
+            with zipfile.ZipFile(zip_path, "w") as zf:
+                zf.writestr("data/projectsettings.ini.bin", raw)
+
+            builder = SPPBuilder(target_major=10)
+            builder._prog_done = 0
+            builder._prog_total = 1
+            tree = {
+                "path": "projectsettings.ini",
+                "dtype": "uint8",
+                "shape": [len(raw)],
+            }
+            info = {
+                "projectsettings.ini": {
+                    "creation_props": {
+                        "shape": [len(raw)],
+                        "maxshape": [None],
+                        "chunks": [65536],
+                    }
+                }
+            }
+            with (
+                zipfile.ZipFile(zip_path) as zf,
+                h5py.File(base / "out.spp", "w") as hf,
+                mock.patch.object(builder, "_strip_projectsettings_fields", return_value=rewritten),
+                mock.patch.object(builder, "_patch_projectsettings_ini", return_value=rewritten),
+            ):
+                builder._create_dataset(hf, "projectsettings.ini", tree, zf, info)
+                dataset = hf["projectsettings.ini"]
+                self.assertEqual(bytes(dataset[()]), rewritten)
+                self.assertEqual(dataset.chunks, (len(rewritten),))
+
     def test_preserve_source_keeps_hbo_bytes_and_skips_decoded_payload(self):
         raw = struct.pack("<III", 0x1B7C2FDD, 0, 70) + b"source-hbo"
         with tempfile.TemporaryDirectory() as td:

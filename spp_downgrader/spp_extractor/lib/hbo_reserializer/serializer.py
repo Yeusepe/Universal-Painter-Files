@@ -41,7 +41,7 @@ class HBOSerializer(HelperMixin, ReaderMixin, InlineWriterMixin, RegistryWriterM
     }
     PRIMITIVE_SIZES = _load_registry_primitive_sizes(PRIMITIVE_SIZES)
     FIELD_PRIMITIVE_SIZES = PRIMITIVE_SIZES
-    MAX_RECURSION = 64
+    MAX_RECURSION = 128
     MAX_ARRAY_ITEMS = 1000000
     TRANSFORM_TYPES = {
         "BakingTweakList",

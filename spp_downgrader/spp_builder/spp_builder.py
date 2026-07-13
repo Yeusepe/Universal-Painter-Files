@@ -787,10 +787,10 @@ class SPPBuilder:
             if shape and not any(m is None for m in maxshape) and list(maxshape) == list(shape):
                 maxshape = None
 
-        if chunks and shape:
-            # Clamp chunk dims when maxshape would make them invalid
+        if chunks:
+            effective_shape = tuple(shape) if shape is not None else arr.shape
             if not maxshape or any(m is not None and c > m for c, m in zip(chunks, maxshape)):
-                chunks = tuple(min(c, s) for c, s in zip(chunks, shape))
+                chunks = tuple(min(c, max(1, s)) for c, s in zip(chunks, effective_shape))
 
         ds_kwargs = {}
         if chunks:
