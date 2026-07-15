@@ -7,8 +7,11 @@ from dataclasses import dataclass
 import hashlib
 import json
 import os
+import platform
 import re
 import shutil
+import stat
+import sys
 import tempfile
 import time
 import urllib.request
@@ -85,6 +88,28 @@ def asset_name_for_version(version):
     return f"{_ZIP_ROOT}-{normalize_version(version)}.zip"
 
 
+def platform_asset_tag(system=None, machine=None):
+    system = (system or platform.system()).strip().lower()
+    machine = (machine or platform.machine()).strip().lower()
+    arches = {"amd64": "x86_64", "x64": "x86_64", "aarch64": "arm64"}
+    return "{}-{}".format(system or "unknown", arches.get(machine, machine or "unknown"))
+
+
+def release_asset_names(version, system=None, machine=None):
+    """Preferred release payloads for this host.
+
+    Existing releases use a generic ZIP containing the Windows executable, so only
+    Windows may safely fall back to that historical name. Linux requires an explicitly
+    tagged payload and will never install a Windows bundle by accident.
+    """
+    normalized = normalize_version(version)
+    system_name = (system or platform.system()).strip().lower()
+    tagged = f"{_ZIP_ROOT}-{normalized}-{platform_asset_tag(system_name, machine)}.zip"
+    if system_name == "windows":
+        return (tagged, asset_name_for_version(normalized))
+    return (tagged,)
+
+
 def settings_dir(base_dir=None):
     if base_dir:
         return base_dir
@@ -94,6 +119,11 @@ def settings_dir(base_dir=None):
     appdata = os.environ.get("APPDATA")
     if appdata:
         return os.path.join(appdata, "UniversalSPP")
+    if sys.platform.startswith("linux"):
+        config_home = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+            os.path.expanduser("~"), ".config"
+        )
+        return os.path.join(config_home, "universal-spp")
     return os.path.join(os.path.expanduser("~"), ".universal_spp")
 
 
@@ -252,15 +282,22 @@ def _checksum_asset_url(assets, zip_name):
 
 def update_info_from_release(release):
     ver = release_version(release)
-    zip_name = asset_name_for_version(ver)
+    zip_names = release_asset_names(ver)
     assets = release.get("assets") or []
     asset = None
-    for item in assets:
-        if item.get("name") == zip_name:
-            asset = item
+    zip_name = zip_names[0]
+    for candidate in zip_names:
+        for item in assets:
+            if item.get("name") == candidate:
+                zip_name = candidate
+                asset = item
+                break
+        if asset is not None:
             break
     if asset is None:
-        raise UpdateError(f"Release v{ver} does not include {zip_name}.")
+        raise UpdateError(
+            f"Release v{ver} does not include a compatible asset ({', '.join(zip_names)})."
+        )
     url = asset.get("browser_download_url") or ""
     if not url:
         raise UpdateError(f"Release asset {zip_name} does not have a download URL.")
@@ -271,7 +308,14 @@ def update_info_from_release(release):
         html_url=release.get("html_url") or RELEASES_PAGE_URL,
         asset_name=zip_name,
         download_url=url,
-        sha256=extract_sha256(release.get("body") or ""),
+        # Historical releases had one generic Windows ZIP and put its hash in the
+        # release body. Platform-tagged releases may contain several hashes, so use a
+        # per-asset checksum file instead of accidentally accepting the first body hash.
+        sha256=(
+            extract_sha256(release.get("body") or "")
+            if zip_name == asset_name_for_version(ver)
+            else ""
+        ),
         checksum_url=_checksum_asset_url(assets, zip_name),
     )
 
@@ -342,6 +386,9 @@ def safe_extract(zip_path, dest_dir):
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with z.open(info) as src, open(target, "wb") as dst:
                 shutil.copyfileobj(src, dst)
+            if sys.platform.startswith("linux") and norm == f"{_ZIP_ROOT}/bin/uspp_tool":
+                current = os.stat(target).st_mode
+                os.chmod(target, current | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
 def _download_url(url, path, timeout=60, progress=None):

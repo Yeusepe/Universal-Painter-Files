@@ -57,6 +57,18 @@ Build a target-version `.spp`:
 python spp_downgrader\uspp_tool.py build --uspp MyProject.uspp --target 10 -o MyProject_v10.spp
 ```
 
+For standalone Linux use, pass the exact target Painter executable when it is
+available so the target-member compatibility filter can inspect it:
+
+```bash
+python spp_downgrader/uspp_tool.py build \
+  --uspp MyProject.uspp --target 10 -o MyProject_v10.spp \
+  --target-binary "/path/to/Adobe Substance 3D Painter"
+```
+
+The Painter plugin supplies this path automatically. Without it, standalone
+Linux conversion still runs but cannot apply the binary-derived member filter.
+
 Close Painter before opening a freshly built file. The converter writes a new
 copy, but Painter can keep runtime state and caches alive inside the running
 process.
@@ -392,4 +404,6 @@ If you omit the dataset path, `doc_treediff.py` defaults to
 - A project that opens successfully can still look different if the target
   Painter version lacks the rendering, shader, bake, or procedural feature used
   by the source.
-- Windows is the supported runtime target for the bundled plugin and executable.
+- Windows is the established runtime target. Native Linux converter and plugin
+  support is experimental; the Win32-only legacy UV-tile guard bypass is not
+  available there.

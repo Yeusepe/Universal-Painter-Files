@@ -5,6 +5,8 @@ background thread, so there is no extra thread/thread-state for the embedded int
 tear down at shutdown (a leftover one crashes Painter in PyErr_Fetch on exit). PySide6 on
 newer Painter, PySide2 on older.
 """
+import os
+
 from . import runner
 
 
@@ -105,7 +107,7 @@ def run_with_progress(parent, title, argv, env_extra=None):
         env.insert(k, v)
     proc.setProcessEnvironment(env)
     # Don't flash a console window for the child console exe (Windows).
-    if hasattr(proc, "setCreateProcessArgumentsModifier"):
+    if os.name == "nt" and hasattr(proc, "setCreateProcessArgumentsModifier"):
         proc.setCreateProcessArgumentsModifier(
             lambda a: setattr(a, "flags", a.flags | 0x08000000))   # CREATE_NO_WINDOW
 

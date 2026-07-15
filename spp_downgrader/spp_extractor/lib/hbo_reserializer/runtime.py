@@ -124,10 +124,18 @@ def load_members(label):
     allowlist. The binary is, in order of preference:
       1. SPP_TARGET_BINARY -- the exact running Painter the plugin is opening into (no guess),
       2. the registry-discovered install for `label` (CLI, no Painter running).
-    Result is cached under %LOCALAPPDATA%/USPP/member_cache. None if no binary is found."""
-    import os, gzip
-    cache_dir = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"),
-                             "USPP", "member_cache")
+    Result is cached in the platform's user cache. None if no binary is found."""
+    import os, gzip, sys
+    if os.environ.get("LOCALAPPDATA"):
+        cache_root = os.path.join(os.environ["LOCALAPPDATA"], "USPP")
+    elif sys.platform.startswith("linux"):
+        cache_root = os.path.join(
+            os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache"),
+            "universal-spp",
+        )
+    else:
+        cache_root = os.path.join(os.path.expanduser("~"), ".cache", "universal-spp")
+    cache_dir = os.path.join(cache_root, "member_cache")
     cache = os.path.join(cache_dir, f"v{label}.txt.gz")
     if os.path.exists(cache):
         try:

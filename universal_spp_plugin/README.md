@@ -15,7 +15,7 @@ The plugin keeps the UI small on purpose:
 - **Plugin Settings...** configures raster fallback capture and update checks.
 
 The plugin does not contain the conversion logic itself. It is a thin Qt/Painter
-integration layer over `bin/uspp_tool.exe`.
+integration layer over the native converter in `bin/uspp_tool[.exe]`.
 
 > [!IMPORTANT]
 > Universal SPP is unofficial and is not affiliated with, endorsed by, sponsored
@@ -26,11 +26,11 @@ integration layer over `bin/uspp_tool.exe`.
 
 ## Install
 
-1. Get `bin/uspp_tool.exe`.
+1. Get the native converter (`bin/uspp_tool.exe` on Windows, `bin/uspp_tool` on Linux).
    - From a release: download the release build and keep the included
-     `universal_spp_plugin/bin/uspp_tool.exe`.
-   - From source: run `build.ps1` from the repository root. It builds the
-     converter and copies it into this plugin folder.
+     matching platform payload under `universal_spp_plugin/bin/`.
+   - From source: run `build.ps1` on Windows or `./build.sh` on Linux. It builds
+     the converter and copies it into this plugin folder.
 2. In Painter, open **Python > Plugins Folder**.
 3. Open the `plugins` subfolder.
 4. Copy the whole `universal_spp_plugin` folder into that `plugins` folder.
@@ -43,7 +43,7 @@ integration layer over `bin/uspp_tool.exe`.
 6. Confirm the converter exists:
 
    ```text
-   python/plugins/universal_spp_plugin/bin/uspp_tool.exe
+   python/plugins/universal_spp_plugin/bin/uspp_tool[.exe]
    ```
 
 7. In Painter, choose **Python > Reload Plugins Folder**, or restart Painter.
@@ -130,7 +130,7 @@ process code.
 | File | Role |
 | --- | --- |
 | [`__init__.py`](__init__.py) | Painter plugin entry point. Creates menus, actions, event hooks, open/save handlers, temp file paths, and cache cleanup. |
-| [`lib/runner.py`](lib/runner.py) | Finds and runs `uspp_tool.exe` or `USPP_TOOL`. Streams progress, captures errors, and never uses shell splitting. |
+| [`lib/runner.py`](lib/runner.py) | Finds and runs the native converter or `USPP_TOOL`. Streams progress, captures errors, and never uses shell splitting. |
 | [`lib/version.py`](lib/version.py) | Detects the running Painter version from the Painter API when available, then falls back to parsing the install path. |
 | [`lib/dialogs.py`](lib/dialogs.py) | Qt dialogs for file picking, errors, info messages, and lossy conversion confirmation. |
 | [`lib/progress.py`](lib/progress.py) | Progress dialog wrapper around the long-running converter calls. |
@@ -147,7 +147,7 @@ work:
 4. Run:
 
    ```text
-   uspp_tool.exe plan --uspp <file.uspp> --target <running-version>
+   uspp_tool[.exe] plan --uspp <file.uspp> --target <running-version>
    ```
 
 5. Stop if no profile path exists.
@@ -156,7 +156,7 @@ work:
 7. Run:
 
    ```text
-   uspp_tool.exe build --uspp <file.uspp> --target <running-version> -o <temp.spp>
+   uspp_tool[.exe] build --uspp <file.uspp> --target <running-version> -o <temp.spp>
    ```
 
 8. Ask where to save the opened `.spp` copy.
@@ -178,7 +178,7 @@ asks before closing the current project and retrying.
 5. Run:
 
    ```text
-   uspp_tool.exe pack <project.spp> -o <output.uspp>
+   uspp_tool[.exe] pack <project.spp> -o <output.uspp>
    ```
 
 Because packing reads the `.spp` file directly, an unsaved temporary Painter
@@ -197,6 +197,9 @@ the same `_open_path()` flow used by the menu.
 This is best effort. It does not require admin rights. If registration is
 blocked, the menu still works.
 
+Linux does not currently install an XDG file association. Use the **Universal**
+menu to open `.uspp` files.
+
 ## Developer Mode
 
 Set `USPP_TOOL` to run the plugin against a source checkout instead of the
@@ -207,7 +210,7 @@ $env:USPP_TOOL = "C:\path\to\universal-spp\spp_downgrader\uspp_tool.py"
 ```
 
 If `USPP_TOOL` ends in `.py`, `runner.py` launches it with the current Python
-interpreter. If it points to an `.exe`, it runs that executable directly.
+interpreter. Otherwise it runs the native executable directly.
 
 Useful rebuild command from the repository root:
 
@@ -218,12 +221,22 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 That command builds `spp_downgrader/dist/uspp_tool.exe` and stages it into
 `universal_spp_plugin/bin/uspp_tool.exe`.
 
+The equivalent Linux command is:
+
+```bash
+./build.sh
+```
+
+It stages an executable `universal_spp_plugin/bin/uspp_tool`. The Linux build is
+experimental. The Win32 PE patch used for legacy UV-tile map export is skipped on
+Linux; normal raster capture is attempted through Painter's native exporter.
+
 ## Troubleshooting
 
 | Problem | Check |
 | --- | --- |
 | **Universal menu does not appear** | Confirm the folder is installed as `python/plugins/universal_spp_plugin/`, then reload plugins and enable it in the **Python** menu. |
-| **Converter not found** | Confirm `bin/uspp_tool.exe` exists inside the plugin folder, or set `USPP_TOOL` during development. |
+| **Converter not found** | Confirm `bin/uspp_tool.exe` (Windows) or executable `bin/uspp_tool` (Linux) exists inside the plugin folder, or set `USPP_TOOL` during development. |
 | **Project must be saved first** | Save the Painter project as a `.spp`, then run **Save as Universal...** again. |
 | **Conversion is reported as unsupported** | The source version cannot reach the target version through the profiles currently shipped in `spp_downgrader/profiles/`. |
 | **Loss warning appears** | The target version is older and cannot represent some source data. The warning is generated from the active downgrade profile. |

@@ -358,6 +358,12 @@ def cmd_raster_plan(args):
 
 
 def cmd_build(args):
+    if args.target_binary:
+        target_binary = os.path.abspath(args.target_binary)
+        if not os.path.isfile(target_binary):
+            print(f"error: target Painter binary not found: {target_binary}", file=sys.stderr)
+            return 2
+        os.environ["SPP_TARGET_BINARY"] = target_binary
     manifest, meta = load_manifest(args.uspp)
     cv = created_version_of(manifest, meta)
     if not cv:
@@ -421,7 +427,7 @@ def main():
     p = sub.add_parser("pack"); p.add_argument("input"); p.add_argument("-o", "--output", required=True); p.add_argument("--raster-capture-dir"); p.add_argument("--raster-budget-mb", type=int); p.set_defaults(fn=cmd_pack)
     p = sub.add_parser("raster-plan"); p.add_argument("input"); p.add_argument("--targets", default="all-lower"); p.add_argument("-o", "--output"); p.set_defaults(fn=cmd_raster_plan)
     p = sub.add_parser("plan"); p.add_argument("--uspp", required=True); p.add_argument("--target", required=True); p.set_defaults(fn=cmd_plan)
-    p = sub.add_parser("build"); p.add_argument("--uspp", required=True); p.add_argument("--target", required=True); p.add_argument("-o", "--output", required=True); p.set_defaults(fn=cmd_build)
+    p = sub.add_parser("build"); p.add_argument("--uspp", required=True); p.add_argument("--target", required=True); p.add_argument("-o", "--output", required=True); p.add_argument("--target-binary", help="exact Painter executable for the target-member compatibility filter"); p.set_defaults(fn=cmd_build)
     p = sub.add_parser("info"); p.add_argument("--uspp", required=True); p.set_defaults(fn=cmd_info)
 
     args = ap.parse_args()

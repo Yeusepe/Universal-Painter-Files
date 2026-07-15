@@ -1,6 +1,6 @@
-# PyInstaller spec for uspp_tool.exe (the bundled converter the Painter plugin calls).
+# PyInstaller spec for the native uspp_tool[.exe] converter the Painter plugin calls.
 # Build:  pyinstaller uspp_tool.spec --noconfirm
-# Output: dist/uspp_tool.exe  (one file)  -> copy into universal_spp_plugin/bin/
+# Output: dist/uspp_tool[.exe] (one file) -> copy into universal_spp_plugin/bin/
 #
 # Bundles all data into a single "profiles/" dir inside the exe; uspp_tool sets
 # SPP_PROFILE_DIR to it at startup, and the frozen-aware loaders read from there.
@@ -25,7 +25,7 @@ for fn in os.listdir(LIB):
     if fn.endswith(("_schema.json", "_defaults.json")):
         datas.append((os.path.join(LIB, fn), "profiles"))
 
-# h5py's HDF5 runtime DLLs (the top packaging risk — collect explicitly).
+# h5py's HDF5 runtime libraries (the top packaging risk — collect explicitly).
 binaries = collect_dynamic_libs("h5py")
 
 a = Analysis(

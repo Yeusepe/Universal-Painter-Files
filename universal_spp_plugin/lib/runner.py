@@ -1,4 +1,4 @@
-"""Locate and invoke the bundled uspp_tool.exe. Pure (no substance_painter / PySide),
+"""Locate and invoke the bundled converter. Pure (no substance_painter / PySide),
 so it is unit-testable headless. Data crosses the boundary as files + one JSON blob."""
 import os
 import sys
@@ -9,11 +9,16 @@ _PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _CREATE_NO_WINDOW = 0x08000000  # Windows: don't flash a console for the child
 
 
+def tool_filename(os_name=None):
+    """Return the native bundled converter name for the current platform."""
+    return "uspp_tool.exe" if (os_name or os.name) == "nt" else "uspp_tool"
+
+
 def tool_path():
-    """bin/uspp_tool.exe next to the plugin. Override with USPP_TOOL for dev/testing;
+    """Native converter in ``bin``. Override with USPP_TOOL for dev/testing;
     if it ends in .py it's run with the current Python, else executed directly.
     (Spaces in the path are fine — no shell splitting.)"""
-    return os.environ.get("USPP_TOOL") or os.path.join(_PLUGIN_ROOT, "bin", "uspp_tool.exe")
+    return os.environ.get("USPP_TOOL") or os.path.join(_PLUGIN_ROOT, "bin", tool_filename())
 
 
 def _argv(*args):
@@ -35,7 +40,16 @@ def _run(*args, capture=True, env_extra=None):
 
 
 def available():
-    return os.path.exists(tool_path())
+    path = tool_path()
+    if not os.path.isfile(path):
+        return False
+    # Python source overrides are launched through sys.executable and need not themselves
+    # be executable. Native POSIX payloads must retain their executable bit after install.
+    return path.lower().endswith(".py") or os.name == "nt" or os.access(path, os.X_OK)
+
+
+def missing_tool_message():
+    return "Converter not found or not executable.\nExpected {}".format(tool_path())
 
 
 def _spp_icon(winreg):

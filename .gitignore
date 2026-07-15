@@ -13,6 +13,7 @@ spp_downgrader/dist/
 
 # Built converter — distributed via GitHub Releases, never committed
 universal_spp_plugin/bin/uspp_tool.exe
+universal_spp_plugin/bin/uspp_tool
 
 # Editor / OS
 .vscode/

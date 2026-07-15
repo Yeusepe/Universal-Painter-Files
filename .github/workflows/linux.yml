@@ -1,0 +1,28 @@
+name: Linux experiment
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install runtime and build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binutils
+          python -m pip install -r requirements.txt pyinstaller py7zr
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Build Linux converter
+        run: ./build.sh
+      - name: Smoke-test Linux converter
+        run: ./universal_spp_plugin/bin/uspp_tool --help
