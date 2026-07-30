@@ -486,8 +486,6 @@ def _open_path(src):
                 )
                 return
             if plan.get("lossy"):
-                # Missing raster fallbacks are not a blocker: the builder logs and
-                # continues with the plain lossy downgrade; confirm_lossy lists them.
                 if not dialogs.confirm_lossy(plan):
                     return
             elif plan.get("direction") == "native_upgrade":
