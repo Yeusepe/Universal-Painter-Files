@@ -459,12 +459,10 @@ def on_open():
 def _open_path(src):
     with _busy_operation():
         try:
-            packed_from_raw_spp = False
             if not runner.available():
                 dialogs.error("Converter not found.\nExpected bin/uspp_tool.exe beside the plugin.")
                 return
             if src.lower().endswith(".spp"):
-                packed_from_raw_spp = True
                 source_for_name = src
                 uspp = _temp_uspp(source_for_name)
                 argv, env = runner.pack_args(src, uspp)
@@ -488,13 +486,8 @@ def _open_path(src):
                 )
                 return
             if plan.get("lossy"):
-                if packed_from_raw_spp and plan.get("missing_raster_fallbacks"):
-                    dialogs.error(
-                        "This project needs raster fallback pixels for this Painter version.\n\n"
-                        "Open the project in a Painter version that can read it, then use "
-                        "Universal > Save as Universal so the fallback pixels can be captured."
-                    )
-                    return
+                # Missing raster fallbacks are not a blocker: the builder logs and
+                # continues with the plain lossy downgrade; confirm_lossy lists them.
                 if not dialogs.confirm_lossy(plan):
                     return
             elif plan.get("direction") == "native_upgrade":
