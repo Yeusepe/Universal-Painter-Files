@@ -57,6 +57,17 @@ Build a target-version `.spp`:
 python spp_downgrader\uspp_tool.py build --uspp MyProject.uspp --target 10 -o MyProject_v10.spp
 ```
 
+Or do the whole `.spp` -> `.spp` conversion in one command:
+
+```powershell
+python spp_downgrader\uspp_tool.py convert MyProject.spp --target 10 -o MyProject_v10.spp
+```
+
+`convert` packs to a temporary `.uspp`, builds the target `.spp`, and deletes the
+intermediate. Pass `--keep-uspp <path>` to keep the intermediate for inspection,
+plus `--raster-capture-dir` / `--raster-budget-mb` for raster fallbacks, exactly as
+on `pack`.
+
 Close Painter before opening a freshly built file. The converter writes a new
 copy, but Painter can keep runtime state and caches alive inside the running
 process.
@@ -69,6 +80,7 @@ process.
 | `info --uspp <file.uspp>` | Prints manifest fields such as created version, supported versions, format version, tool version, and source file. |
 | `plan --uspp <file.uspp> --target <version>` | Resolves the conversion direction and prints JSON showing whether the target is supported and what lossy changes are expected. |
 | `build --uspp <file.uspp> --target <version> -o <out.spp>` | Rebuilds a native `.spp` for the target version or for the stored version when the target can upgrade natively. |
+| `convert <in.spp> --target <version> -o <out.spp>` | One-shot `.spp` -> `.spp`: packs to a temporary `.uspp`, then builds the target. Supports `--keep-uspp`, `--raster-capture-dir`, and `--raster-budget-mb`. |
 
 Version labels can be major-only or major-minor, such as `10`, `12`, or `12.1`.
 

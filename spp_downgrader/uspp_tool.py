@@ -3,10 +3,11 @@
 plugin calls). One CLI over the extractor + builder + profile/lossiness engine.
 
 Subcommands:
-  pack  <in.spp> -o <out.uspp>            extract + write the universal manifest
-  plan  --uspp <f> --target <maj.min>     -> JSON {direction, supported, lossy, lost_features, ...}
-  build --uspp <f> --target <maj.min> -o <out.spp>   produce a native .spp for the target
-  info  --uspp <f>                        print the manifest
+  pack    <in.spp> -o <out.uspp>          extract + write the universal manifest
+  plan    --uspp <f> --target <maj.min>   -> JSON {direction, supported, lossy, lost_features, ...}
+  build   --uspp <f> --target <maj.min> -o <out.spp>   produce a native .spp for the target
+  convert <in.spp> --target <maj.min> -o <out.spp>     one-shot pack + build (.spp -> .spp)
+  info    --uspp <f>                      print the manifest
 
 Direction (S = .uspp created version, T = target/running version):
   T == S            exact          rebuild at S, no transform
@@ -245,6 +246,46 @@ def cmd_pack(args):
     return 0
 
 
+def cmd_convert(args):
+    """One-shot .spp -> .spp: pack to an intermediate .uspp, then build for the target."""
+    import tempfile
+
+    keep = getattr(args, "keep_uspp", None)
+    if keep:
+        uspp_path = keep
+        tmp = None
+    else:
+        tmp = tempfile.NamedTemporaryFile(suffix=".uspp", delete=False)
+        tmp.close()
+        uspp_path = tmp.name
+
+    try:
+        pack_ns = argparse.Namespace(
+            input=args.input,
+            output=uspp_path,
+            raster_capture_dir=getattr(args, "raster_capture_dir", None),
+            raster_budget_mb=getattr(args, "raster_budget_mb", None),
+            verbose=args.verbose,
+        )
+        rc = cmd_pack(pack_ns)
+        if rc != 0:
+            return rc
+
+        build_ns = argparse.Namespace(
+            uspp=uspp_path,
+            target=args.target,
+            output=args.output,
+            verbose=args.verbose,
+        )
+        return cmd_build(build_ns)
+    finally:
+        if tmp is not None:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+
+
 def cmd_info(args):
     manifest, meta = load_manifest(args.uspp)
     cv = created_version_of(manifest, meta)
@@ -422,6 +463,7 @@ def main():
     p = sub.add_parser("raster-plan"); p.add_argument("input"); p.add_argument("--targets", default="all-lower"); p.add_argument("-o", "--output"); p.set_defaults(fn=cmd_raster_plan)
     p = sub.add_parser("plan"); p.add_argument("--uspp", required=True); p.add_argument("--target", required=True); p.set_defaults(fn=cmd_plan)
     p = sub.add_parser("build"); p.add_argument("--uspp", required=True); p.add_argument("--target", required=True); p.add_argument("-o", "--output", required=True); p.set_defaults(fn=cmd_build)
+    p = sub.add_parser("convert"); p.add_argument("input"); p.add_argument("--target", required=True); p.add_argument("-o", "--output", required=True); p.add_argument("--raster-capture-dir"); p.add_argument("--raster-budget-mb", type=int); p.add_argument("--keep-uspp"); p.set_defaults(fn=cmd_convert)
     p = sub.add_parser("info"); p.add_argument("--uspp", required=True); p.set_defaults(fn=cmd_info)
 
     args = ap.parse_args()
