@@ -1,10 +1,12 @@
-"""A non-blocking progress dialog for the long-running pack/build subprocess.
+"""A non-blocking progress dialog for converter subprocesses.
 
 The converter runs as a QProcess driven by Qt's event loop on the main thread -- no Python
 background thread, so there is no extra thread/thread-state for the embedded interpreter to
 tear down at shutdown (a leftover one crashes Painter in PyErr_Fetch on exit). PySide6 on
 newer Painter, PySide2 on older.
 """
+import json
+
 from . import runner
 
 
@@ -68,9 +70,13 @@ def _make_bar(QtCore, QtGui, QtWidgets):
     return _Bar()
 
 
-def run_with_progress(parent, title, argv, env_extra=None):
+def _run_with_progress(parent, title, argv, env_extra=None):
     """Show a modal progress dialog while `argv` runs as a QProcess. Parses the tool's
-    __USPP_PROGRESS__ lines (and phase prefixes) to drive the bar/status. Returns (ok, err)."""
+    __USPP_PROGRESS__ lines (and phase prefixes) to drive the bar/status.
+
+    Returns ``(ok, error, stdout)``. Standard output and error are kept separate so
+    callers can safely parse JSON without an incidental warning corrupting it.
+    """
     QtCore, QtGui, QtWidgets = _qt()
     out = {"ok": False, "err": ""}
 
@@ -98,7 +104,7 @@ def run_with_progress(parent, title, argv, env_extra=None):
     lay.addWidget(bar)
 
     proc = QtCore.QProcess(dlg)
-    proc.setProcessChannelMode(QtCore.QProcess.MergedChannels)   # one stream, no pipe deadlock
+    proc.setProcessChannelMode(QtCore.QProcess.SeparateChannels)
     env = QtCore.QProcessEnvironment.systemEnvironment()
     env.insert("USPP_PROGRESS", "1")
     for k, v in (env_extra or {}).items():
@@ -109,8 +115,10 @@ def run_with_progress(parent, title, argv, env_extra=None):
         proc.setCreateProcessArgumentsModifier(
             lambda a: setattr(a, "flags", a.flags | 0x08000000))   # CREATE_NO_WINDOW
 
-    log = []
-    buf = {"s": ""}
+    stdout_log = []
+    stderr_log = []
+    stdout_buf = {"s": ""}
+    stderr_buf = {"s": ""}
 
     def handle(line):
         if line.startswith(runner._PROGRESS_TAG):
@@ -125,26 +133,43 @@ def run_with_progress(parent, title, argv, env_extra=None):
                     pass
             return
         if line:
-            log.append(line)
+            stdout_log.append(line)
             for prefix, friendly in runner._PHASES:
                 if prefix in line:
                     status_lbl.setText(friendly)
                     break
 
-    def on_read():
-        buf["s"] += bytes(proc.readAllStandardOutput()).decode("utf-8", "replace")
-        while "\n" in buf["s"]:
-            line, buf["s"] = buf["s"].split("\n", 1)
+    def on_read_stdout():
+        stdout_buf["s"] += bytes(proc.readAllStandardOutput()).decode("utf-8", "replace")
+        while "\n" in stdout_buf["s"]:
+            line, stdout_buf["s"] = stdout_buf["s"].split("\n", 1)
             handle(line.rstrip("\r"))
 
+    def on_read_stderr():
+        stderr_buf["s"] += bytes(proc.readAllStandardError()).decode("utf-8", "replace")
+        while "\n" in stderr_buf["s"]:
+            line, stderr_buf["s"] = stderr_buf["s"].split("\n", 1)
+            line = line.rstrip("\r")
+            if line:
+                stderr_log.append(line)
+
     def on_finished(code, status):
-        on_read()
+        on_read_stdout()
+        on_read_stderr()
+        if stdout_buf["s"]:
+            handle(stdout_buf["s"].rstrip("\r"))
+            stdout_buf["s"] = ""
+        if stderr_buf["s"]:
+            stderr_log.append(stderr_buf["s"].rstrip("\r"))
+            stderr_buf["s"] = ""
         out["ok"] = (code == 0 and status == QtCore.QProcess.NormalExit)
-        out["err"] = "" if out["ok"] else ("\n".join(log[-10:]) or f"exited {code}")
+        diagnostic = stderr_log + stdout_log
+        out["err"] = "" if out["ok"] else ("\n".join(diagnostic[-10:]) or f"exited {code}")
         timer.stop()
         dlg.accept()
 
-    proc.readyReadStandardOutput.connect(on_read)
+    proc.readyReadStandardOutput.connect(on_read_stdout)
+    proc.readyReadStandardError.connect(on_read_stderr)
     proc.finished.connect(on_finished)
 
     timer = QtCore.QTimer(dlg)          # UI-only: animate the marquee while indeterminate
@@ -157,7 +182,7 @@ def run_with_progress(parent, title, argv, env_extra=None):
         out["err"] = proc.errorString() or "converter process could not start"
         proc.deleteLater()
         dlg.deleteLater()
-        return False, out["err"]
+        return False, out["err"], ""
 
     (dlg.exec if hasattr(dlg, "exec") else dlg.exec_)()
     # Some Painter/Qt menu paths can unwind the nested dialog loop before the
@@ -172,4 +197,25 @@ def run_with_progress(parent, title, argv, env_extra=None):
     # shutdown, where PySide teardown against the finalizing interpreter can crash.
     proc.deleteLater()
     dlg.deleteLater()
-    return out["ok"], out["err"]
+    return out["ok"], out["err"], "\n".join(stdout_log)
+
+
+def run_with_progress(parent, title, argv, env_extra=None):
+    """Run a converter command while keeping Painter's event loop responsive."""
+    ok, err, _stdout = _run_with_progress(parent, title, argv, env_extra)
+    return ok, err
+
+
+def run_json_with_progress(parent, title, argv, env_extra=None):
+    """Run a converter command responsively and decode its JSON standard output.
+
+    Returns ``(ok, value, error)`` so malformed output follows the same visible
+    error path as process startup and non-zero exits.
+    """
+    ok, err, stdout = _run_with_progress(parent, title, argv, env_extra)
+    if not ok:
+        return False, None, err
+    try:
+        return True, json.loads(stdout), ""
+    except (TypeError, ValueError) as exc:
+        return False, None, f"Converter returned invalid JSON: {exc}"

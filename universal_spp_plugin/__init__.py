@@ -5,7 +5,7 @@ opening converts it to the running Painter version (downgrading via the bundled
 uspp_tool, or letting Painter upgrade natively), after a plain-English lossy warning.
 
 Install: drop this folder into  Documents/Adobe/Adobe Substance 3D Painter/python/plugins/
-Requires bin/uspp_tool.exe beside this file (the bundled converter).
+Requires the bundled converter under bin/uspp_tool/ beside this file.
 """
 import os
 import json
@@ -449,7 +449,7 @@ def _open_launch_if_gui_up():
 
 def on_open():
     if not runner.available():
-        dialogs.error("Converter not found.\nExpected bin/uspp_tool.exe beside the plugin.")
+        dialogs.error("Converter not found.\nExpected bin/uspp_tool/uspp_tool.exe beside the plugin.")
         return
     uspp = dialogs.open_uspp()
     if uspp:
@@ -460,7 +460,7 @@ def _open_path(src):
     with _busy_operation():
         try:
             if not runner.available():
-                dialogs.error("Converter not found.\nExpected bin/uspp_tool.exe beside the plugin.")
+                dialogs.error("Converter not found.\nExpected bin/uspp_tool/uspp_tool.exe beside the plugin.")
                 return
             if src.lower().endswith(".spp"):
                 source_for_name = src
@@ -477,7 +477,13 @@ def _open_path(src):
             if not target:
                 dialogs.error("Could not detect the running Painter version.")
                 return
-            plan = runner.run_plan(uspp, target)
+            argv, env = runner.plan_args(uspp, target)
+            ok, plan, err = progress.run_json_with_progress(
+                _parent(), "Checking project compatibility", argv, env
+            )
+            if not ok:
+                dialogs.error(f"Could not inspect the project.\n{err}")
+                return
 
             if not plan.get("supported"):
                 dialogs.error(
@@ -534,7 +540,7 @@ def on_save():
     with _busy_operation():
         try:
             if not runner.available():
-                dialogs.error("Converter not found.\nExpected bin/uspp_tool.exe beside the plugin.")
+                dialogs.error("Converter not found.\nExpected bin/uspp_tool/uspp_tool.exe beside the plugin.")
                 return
             if not sp_project.is_open():
                 dialogs.error("Open a project first.")

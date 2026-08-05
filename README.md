@@ -64,7 +64,7 @@ Use this path if you want the menu inside Painter.
 3. Go to **Python > Plugins Folder**. This opens the correct plugin directory for
    your machine, usually `Documents\Adobe\Adobe Substance 3D Painter\python\plugins`.
 4. Extract the release so the plugin root is directly inside `plugins`.
-5. Make sure `universal_spp_plugin/bin/uspp_tool.exe` exists.
+5. Make sure `universal_spp_plugin/bin/uspp_tool/uspp_tool.exe` exists.
 6. Go to **Python > Reload Plugins Folder**, or restart Painter.
 7. Enable `universal_spp_plugin` from the **Python** menu if Painter did not
    enable it automatically.
@@ -180,7 +180,7 @@ More engine detail is in
 
 ## Build From Source
 
-The plugin calls `universal_spp_plugin/bin/uspp_tool.exe`. Client machines do not
+The plugin calls `universal_spp_plugin/bin/uspp_tool/uspp_tool.exe`. Client machines do not
 need Python when that executable is present. To build it yourself on Windows:
 
 ```powershell
@@ -193,10 +193,10 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
 `build.ps1` runs PyInstaller from inside `spp_downgrader/`, then copies the
-result to:
+one-folder bundle to:
 
 ```text
-universal_spp_plugin/bin/uspp_tool.exe
+universal_spp_plugin/bin/uspp_tool/uspp_tool.exe
 ```
 
 ## Requirements

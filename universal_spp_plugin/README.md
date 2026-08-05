@@ -15,7 +15,7 @@ The plugin keeps the UI small on purpose:
 - **Plugin Settings...** configures raster fallback capture and update checks.
 
 The plugin does not contain the conversion logic itself. It is a thin Qt/Painter
-integration layer over `bin/uspp_tool.exe`.
+integration layer over `bin/uspp_tool/uspp_tool.exe`.
 
 > [!IMPORTANT]
 > Universal SPP is unofficial and is not affiliated with, endorsed by, sponsored
@@ -26,9 +26,9 @@ integration layer over `bin/uspp_tool.exe`.
 
 ## Install
 
-1. Get `bin/uspp_tool.exe`.
+1. Get the `bin/uspp_tool/` converter folder.
    - From a release: download the release build and keep the included
-     `universal_spp_plugin/bin/uspp_tool.exe`.
+     `universal_spp_plugin/bin/uspp_tool/uspp_tool.exe`.
    - From source: run `build.ps1` from the repository root. It builds the
      converter and copies it into this plugin folder.
 2. In Painter, open **Python > Plugins Folder**.
@@ -43,7 +43,7 @@ integration layer over `bin/uspp_tool.exe`.
 6. Confirm the converter exists:
 
    ```text
-   python/plugins/universal_spp_plugin/bin/uspp_tool.exe
+   python/plugins/universal_spp_plugin/bin/uspp_tool/uspp_tool.exe
    ```
 
 7. In Painter, choose **Python > Reload Plugins Folder**, or restart Painter.
@@ -215,15 +215,16 @@ Useful rebuild command from the repository root:
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
-That command builds `spp_downgrader/dist/uspp_tool.exe` and stages it into
-`universal_spp_plugin/bin/uspp_tool.exe`.
+That command builds `spp_downgrader/dist/uspp_tool/` and stages it into
+`universal_spp_plugin/bin/uspp_tool/`. Keeping the dependencies unpacked avoids
+the repeated extraction cost of a PyInstaller one-file executable.
 
 ## Troubleshooting
 
 | Problem | Check |
 | --- | --- |
 | **Universal menu does not appear** | Confirm the folder is installed as `python/plugins/universal_spp_plugin/`, then reload plugins and enable it in the **Python** menu. |
-| **Converter not found** | Confirm `bin/uspp_tool.exe` exists inside the plugin folder, or set `USPP_TOOL` during development. |
+| **Converter not found** | Confirm `bin/uspp_tool/uspp_tool.exe` exists inside the plugin folder, or set `USPP_TOOL` during development. Legacy `bin/uspp_tool.exe` releases remain supported. |
 | **Project must be saved first** | Save the Painter project as a `.spp`, then run **Save as Universal...** again. |
 | **Conversion is reported as unsupported** | The source version cannot reach the target version through the profiles currently shipped in `spp_downgrader/profiles/`. |
 | **Loss warning appears** | The target version is older and cannot represent some source data. The warning is generated from the active downgrade profile. |

@@ -10,10 +10,20 @@ _CREATE_NO_WINDOW = 0x08000000  # Windows: don't flash a console for the child
 
 
 def tool_path():
-    """bin/uspp_tool.exe next to the plugin. Override with USPP_TOOL for dev/testing;
-    if it ends in .py it's run with the current Python, else executed directly.
-    (Spaces in the path are fine — no shell splitting.)"""
-    return os.environ.get("USPP_TOOL") or os.path.join(_PLUGIN_ROOT, "bin", "uspp_tool.exe")
+    """Find the converter, preferring the faster PyInstaller onedir bundle.
+
+    Older releases staged a one-file executable directly under ``bin``; retain
+    that as a fallback so an independently updated plugin remains usable.
+    ``USPP_TOOL`` still overrides both layouts for development/testing.
+    """
+    override = os.environ.get("USPP_TOOL")
+    if override:
+        return override
+    candidates = (
+        os.path.join(_PLUGIN_ROOT, "bin", "uspp_tool", "uspp_tool.exe"),
+        os.path.join(_PLUGIN_ROOT, "bin", "uspp_tool.exe"),
+    )
+    return next((path for path in candidates if os.path.exists(path)), candidates[0])
 
 
 def _argv(*args):
@@ -94,6 +104,11 @@ def run_plan(uspp, target):
     if r.returncode not in (0,):
         raise RuntimeError(r.stderr or f"plan exited {r.returncode}")
     return json.loads(r.stdout)
+
+
+def plan_args(uspp, target):
+    """Build argv/env for an event-driven compatibility check in Painter."""
+    return _argv("plan", "--uspp", uspp, "--target", target), {}
 
 
 _PROGRESS_TAG = "__USPP_PROGRESS__"

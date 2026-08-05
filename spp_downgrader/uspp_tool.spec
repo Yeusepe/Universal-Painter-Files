@@ -1,6 +1,6 @@
 # PyInstaller spec for uspp_tool.exe (the bundled converter the Painter plugin calls).
 # Build:  pyinstaller uspp_tool.spec --noconfirm
-# Output: dist/uspp_tool.exe  (one file)  -> copy into universal_spp_plugin/bin/
+# Output: dist/uspp_tool/  (one folder)  -> copy into universal_spp_plugin/bin/
 #
 # Bundles all data into a single "profiles/" dir inside the exe; uspp_tool sets
 # SPP_PROFILE_DIR to it at startup, and the frozen-aware loaders read from there.
@@ -53,6 +53,11 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 exe = EXE(
-    pyz, a.scripts, a.binaries, a.datas, [],
+    pyz, a.scripts, [],
+    exclude_binaries=True,
     name="uspp_tool", debug=False, strip=False, upx=False, console=True,
+)
+coll = COLLECT(
+    exe, a.binaries, a.datas,
+    strip=False, upx=False, name="uspp_tool",
 )

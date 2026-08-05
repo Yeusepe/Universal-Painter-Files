@@ -18,6 +18,31 @@ def load_runner():
 
 
 class PluginRunnerTests(unittest.TestCase):
+    def test_plan_args_support_event_driven_execution(self):
+        runner = load_runner()
+        with mock.patch.dict(os.environ, {"USPP_TOOL": "C:/tools/uspp_tool.exe"}):
+            argv, env = runner.plan_args("in.uspp", "10")
+
+        self.assertEqual(argv, [
+            "C:/tools/uspp_tool.exe",
+            "plan", "--uspp", "in.uspp", "--target", "10",
+        ])
+        self.assertEqual(env, {})
+
+    def test_tool_path_prefers_onedir_and_falls_back_to_legacy_onefile(self):
+        runner = load_runner()
+        onedir = os.path.join(runner._PLUGIN_ROOT, "bin", "uspp_tool", "uspp_tool.exe")
+        legacy = os.path.join(runner._PLUGIN_ROOT, "bin", "uspp_tool.exe")
+
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+            runner.os.path, "exists", side_effect=lambda path: path == onedir
+        ):
+            self.assertEqual(runner.tool_path(), onedir)
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+            runner.os.path, "exists", side_effect=lambda path: path == legacy
+        ):
+            self.assertEqual(runner.tool_path(), legacy)
+
     def test_pack_args_can_include_raster_capture_dir(self):
         runner = load_runner()
         with mock.patch.dict(os.environ, {"USPP_TOOL": "C:/tools/uspp_tool.py"}):
