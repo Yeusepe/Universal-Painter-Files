@@ -1311,6 +1311,10 @@ class TransformMixin:
                             new_points.append(point)
                             continue
                         point_type, point_fields = point[1]
+                        target_point_schema = runtime.V10_SCHEMA.get(point_type) or []
+                        if "pressure" in target_point_schema:
+                            new_points.append(point)
+                            continue
                         pressure_field = self._get_field(point_fields, "pressure")
                         pressure_val = None
                         if pressure_field and pressure_field[2][0] == "primitive":

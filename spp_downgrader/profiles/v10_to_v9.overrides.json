@@ -4,7 +4,10 @@
 
   "_comment_schema_add": "DataActionSmudge is missing from the auto-generated v9 schema (no v9 sample uses the smudge tool), so a smudge layer downgraded to v9 isn't projected and v9 errors 'No value defined for DataActionSmudge.projDuplicates'. v12.1 dropped projDuplicates/stencilPostBlending (it carries changeFlags/strokes3D instead), so they must be synthesized. Member list = v9 DataActionPaint minus sourceColor (the v9 stroke-action family base). Mirrors the same fix at the v9->v8.1 boundary; this one covers the v9 target. defaults_add values are the genuine v9 DataActionPaint/Eraser defaults.",
   "schema_add": {
-    "DataActionSmudge": ["brush", "channelTypes", "enabled", "opacity", "projDuplicates", "projMatrix", "projSamplingWrap", "selection", "sourceStencil", "sourceTransparent", "stampBlendingMode", "stencilPostBlending", "strokes", "strokes3D", "tags", "uid"]
+    "DataActionSmudge": ["brush", "channelTypes", "enabled", "opacity", "projDuplicates", "projMatrix", "projSamplingWrap", "selection", "sourceStencil", "sourceTransparent", "stampBlendingMode", "stencilPostBlending", "strokes", "strokes3D", "tags", "uid"],
+    "DataStroke3D": ["duplicateCount", "duplicateMatrix", "label", "isClosed", "points"],
+    "DataStroke3DKey": ["normal", "position", "pressure", "type"],
+    "DataEmitterStroke3D": ["followPath", "positionJitter", "positionJitterBothAxes", "positionJitterDistribution", "pressureFlowEnabled", "pressureFlowMinimum", "pressureSizeEnabled", "pressureSizeMinimum", "rotation", "rotationJitter", "spacing", "tolerance", "uid", "upVector"]
   },
   "defaults_add": {
     "DataActionSmudge": {
