@@ -4,6 +4,17 @@ By contributing, you confirm that your contribution is your own original work or
 is provided under a license that allows it to be included in this MIT-licensed
 project.
 
+## Tests
+
+Run the Python suite and the capture companion's JavaScript behavior tests from
+the repository root. The JavaScript tests use Node.js 18 or newer and its built-in
+test runner; no npm packages or Painter installation are needed.
+
+```text
+python -m unittest discover -s tests -q
+node --test tests/raster_capture.test.js
+```
+
 ## Copyright rules
 
 Do not contribute:

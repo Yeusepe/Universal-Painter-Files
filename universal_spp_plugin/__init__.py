@@ -386,6 +386,8 @@ def _raster_capture_for_pack(spp, settings=None):
         raise
     manifest = _load_json_file(manifest_path)
     have = {a.get("request_id") for a in manifest.get("assets") or [] if a.get("request_id")}
+    have.update(r.get("request_id") for r in manifest.get("skipped_requests") or []
+                if r.get("reason") == "unused_texture_set")
     missing = [r.get("id") for r in requests if r.get("id") not in have]
     warnings = list(manifest.get("warnings") or [])
     if missing or warnings:

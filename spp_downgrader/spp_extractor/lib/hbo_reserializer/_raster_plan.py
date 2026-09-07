@@ -60,10 +60,10 @@ def _object_uid(obj):
     return _primitive_int(f[2])
 
 
-def _label(obj):
+def _label(obj, field_name="label"):
     if not obj or not obj[1]:
         return None
-    f = _field(obj[1], "label")
+    f = _field(obj[1], field_name)
     if f and f[2][0] == "string":
         try:
             return f[2][1].decode("utf-8", "replace")
@@ -98,14 +98,14 @@ class RasterRequest:
     __slots__ = (
         "id", "dataset", "target", "scope", "kind", "object_type", "reason",
         "path", "layer_uid", "stack_uid", "object_uid", "label",
-        "material_index", "stack_index", "capture",
+        "material_index", "material_name", "stack_index", "capture",
         "preserves_editability", "visual_confidence",
     )
 
     def __init__(self, *, dataset=None, target=None, scope=None, kind=None,
                  object_type=None, reason="", path=(), layer_uid=None,
                  stack_uid=None, object_uid=None, label=None,
-                 material_index=None, stack_index=None, capture=None,
+                 material_index=None, material_name=None, stack_index=None, capture=None,
                  preserves_editability="partial", visual_confidence="exact"):
         self.dataset = dataset
         self.target = target
@@ -119,6 +119,7 @@ class RasterRequest:
         self.object_uid = object_uid
         self.label = label
         self.material_index = material_index
+        self.material_name = material_name
         self.stack_index = stack_index
         self.capture = capture or {}
         self.preserves_editability = preserves_editability
@@ -162,6 +163,7 @@ class RasterRequest:
             "object_uid": self.object_uid,
             "label": self.label,
             "material_index": self.material_index,
+            "material_name": self.material_name,
             "stack_index": self.stack_index,
             "capture": self.capture,
             "preserves_editability": self.preserves_editability,
@@ -325,6 +327,7 @@ class RasterPlanner:
             object_uid=_object_uid(obj),
             label=_label(obj) or ctx.get("layer_label"),
             material_index=ctx.get("material_index"),
+            material_name=ctx.get("material_name"),
             stack_index=ctx.get("stack_index"),
             capture=self._capture_for(scope, kind, ctx, channel_mask),
             preserves_editability=(
@@ -340,6 +343,8 @@ class RasterPlanner:
         obj_name, fields = obj
         uid = _object_uid(obj)
         nctx = dict(ctx)
+        if obj_name == "DataMaterial":
+            nctx["material_name"] = _label(obj, "sceneMaterialName")
         channel_field = _field(fields, "channelTypes")
         if channel_field:
             nctx["channel_mask"] = _primitive_int(channel_field[2])

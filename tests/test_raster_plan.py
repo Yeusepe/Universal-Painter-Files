@@ -282,6 +282,7 @@ class RasterPlanScopeTests(unittest.TestCase):
     def test_nested_document_requests_include_material_and_stack_indexes(self):
         root = obj("DataDocument", [
             field("materials", arr(obj("DataMaterial", [
+                field("sceneMaterialName", ("string", b"Body"), 16),
                 field("stacks", arr(obj("DataMaterialStack", [
                     field("stack", oval(obj("DataStackLayers", [
                         field("uid", prim(9, 77), 9),
@@ -300,6 +301,7 @@ class RasterPlanScopeTests(unittest.TestCase):
         reqs = self.collect(root)
         self.assertEqual(reqs[0]["scope"], rp.S_LAYER)
         self.assertEqual(reqs[0]["material_index"], 0)
+        self.assertEqual(reqs[0]["material_name"], "Body")
         self.assertEqual(reqs[0]["stack_index"], 0)
 
     def test_request_id_is_reusable_across_target_versions(self):

@@ -74,6 +74,38 @@ class RasterManifestTests(unittest.TestCase):
         self.assertFalse(summary["raster_required"])
         self.assertEqual(summary["raster_request_count"], 0)
 
+    def test_unused_texture_set_skips_survive_packing_and_do_not_require_pixels(self):
+        requests = [{"id": "old_body"}, {"id": "old_eyes"}, {"id": "body"}]
+        skipped = [
+            {"request_id": rid, "material_name": name, "reason": "unused_texture_set"}
+            for rid, name in (("old_body", "OldBody"), ("old_eyes", "OldEyes"))
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            (base / "body.png").write_bytes(b"pixels")
+            (base / "manifest.json").write_text(json.dumps({
+                "requests": requests, "skipped_requests": skipped,
+                "assets": [{"request_id": "body", "path": "body.png"}],
+            }), encoding="utf-8")
+            with zipfile.ZipFile(base / "out.uspp", "w") as z:
+                rm.add_capture_dir_to_zip(z, base)
+            with zipfile.ZipFile(base / "out.uspp") as z:
+                manifest = rm.load_from_zip(z)
+
+        self.assertEqual(manifest["skipped_requests"], skipped)
+        summary = rm.summarize(manifest, requests)
+        self.assertEqual(summary["raster_request_count"], 1)
+        self.assertTrue(summary["raster_available"])
+        self.assertEqual(summary["missing_raster_fallbacks"], [])
+        self.assertFalse(rm.summarize(manifest, requests[:2])["raster_required"])
+
+    def test_other_skip_reasons_do_not_hide_missing_captures(self):
+        manifest = {
+            "requests": [{"id": "active"}],
+            "skipped_requests": [{"request_id": "active", "reason": "capture_failed"}],
+        }
+        self.assertEqual(rm.summarize(manifest)["missing_raster_fallbacks"], [{"id": "active"}])
+
 
 if __name__ == "__main__":
     unittest.main()

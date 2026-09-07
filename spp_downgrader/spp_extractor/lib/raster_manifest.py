@@ -15,6 +15,7 @@ def empty_manifest():
     return {
         "version": VERSION,
         "requests": [],
+        "skipped_requests": [],
         "assets": [],
         "warnings": [],
     }
@@ -43,7 +44,9 @@ def asset_request_ids(manifest):
 def summarize(manifest, requests=None):
     if requests is None:
         requests = manifest.get("requests") or []
-    requests = list(requests)
+    skipped = {r.get("request_id") for r in manifest.get("skipped_requests") or []
+               if r.get("reason") == "unused_texture_set"}
+    requests = [r for r in requests if r.get("id") not in skipped]
     have = asset_request_ids(manifest)
     missing = [r for r in requests if r.get("id") not in have]
     return {
@@ -93,6 +96,7 @@ def add_capture_dir_to_zip(zf, capture_dir, budget_bytes=DEFAULT_BUDGET_BYTES):
         zf.writestr(MANIFEST_NAME, json.dumps(out, indent=2))
         return out
     out["requests"] = list(cap.get("requests") or [])
+    out["skipped_requests"] = list(cap.get("skipped_requests") or [])
     seen_hashes = set()
     total = 0
     for asset in cap.get("assets") or []:
