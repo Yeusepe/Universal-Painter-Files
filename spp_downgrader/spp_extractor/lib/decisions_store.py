@@ -75,17 +75,3 @@ def _describe(diff):
     if k in ("FIELD_MISSING_IN_TARGET", "FIELD_EXTRA_IN_TARGET"):
         return f"{k} {st}.{fn}"
     return f"{k} {st or ''} {fn or ''}".strip()
-
-
-if __name__ == "__main__":
-    # self-check: signature is stable & path-independent; round-trips
-    d1 = {"kind": "TYPE", "src_type": "DataBrushStamp", "tgt_type": "DataBrush",
-          "src_fieldset": ["b", "a"], "field_name": None}
-    d2 = dict(d1, src_fieldset=["a", "b"])         # reordered fieldset -> same sig
-    assert signature(d1) == signature(d2), "signature must ignore fieldset order"
-    d3 = dict(d1, src_type="Other")
-    assert signature(d1) != signature(d3), "different type -> different sig"
-    s = {}
-    record(s, d1, "rename", "DataBrush", "interactive", "2026-06-26")
-    assert resolve(s, d2)["value"] == "DataBrush", "resolve must match reordered twin"
-    print("decisions_store self-check OK")

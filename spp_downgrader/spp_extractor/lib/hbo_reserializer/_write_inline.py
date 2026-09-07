@@ -25,28 +25,8 @@ class InlineWriterMixin:
                 else:
                     new_fields.append((name, tcode, value))
             fields = new_fields
-        if type_name in ("DataSourceUniform", "DataTweakFloat", "DataTweakFloat3", "DataTweakFloat4"):
-            if type_name == "DataSourceUniform":
-                order = {
-                    "channelTypes": 0,
-                    "color": 1,
-                    "opacity": 2,
-                    "uid": 3,
-                    "tags": 4,
-                    "uvGrid": 5,
-                    "uvSamplingWrap": 6,
-                    "uvTransformation": 7,
-                }
-            else:
-                order = {
-                    "identifier": 0,
-                    "uid": 1,
-                    "value": 2,
-                    "urlToSbsRes": 3,
-                    "uvGrid": 4,
-                    "uvSamplingWrap": 5,
-                    "uvTransformation": 6,
-                }
+        order = self._v10_field_order(type_name)
+        if order:
             fields = sorted(
                 enumerate(fields),
                 key=lambda item: (order.get(item[1][0], 999), item[0]),
@@ -227,4 +207,3 @@ class InlineWriterMixin:
             elif size == 64 and len(nums) >= 16:
                 raw[:64] = struct.pack('<16f', *[float(n) for n in nums[:16]])
         dst.write(struct.pack('B', v10_tag) + raw)
-

@@ -357,25 +357,3 @@ def encode_to_hbo(data: Dict[str, Any], version: str = 'v10', data_version: int 
     if version == 'v11_binary':
         return encoder.encode_v11_binary(data)
     return encoder.encode_v10(data, data_version)
-
-
-if __name__ == '__main__':
-    # Test encoding
-    test_data = {
-        'TestObject': {
-            'name': 'Hello',
-            'value': 42,
-            'enabled': True,
-            'position': [1.0, 2.0, 3.0]
-        }
-    }
-
-    print("Testing HBO v10 encoder...")
-    hbo_v10 = encode_to_hbo(test_data, 'v10', 20)
-    print(f"  Generated {len(hbo_v10)} bytes")
-    print(f"  Header: {hbo_v10[:12].hex()}")
-
-    print("\nTesting HBO v11 encoder...")
-    hbo_v11 = encode_to_hbo(test_data, 'v11', 20)
-    print(f"  Generated {len(hbo_v11)} bytes")
-    print(f"  Header: {hbo_v11[:12].hex()}")

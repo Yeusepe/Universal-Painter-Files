@@ -3,6 +3,57 @@ import struct
 
 
 class HelperMixin:
+    V10_SOURCE_FIELD_ORDER = {
+        name: index for index, name in enumerate((
+            "channelTypes", "color", "opacity", "uid", "tags", "uvGrid",
+            "uvSamplingWrap", "uvTransformation",
+        ))
+    }
+    V10_TWEAK_FIELD_ORDER = {
+        name: index for index, name in enumerate((
+            "identifier", "uid", "value", "urlToSbsRes", "uvGrid",
+            "uvSamplingWrap", "uvTransformation",
+        ))
+    }
+
+    def _v10_field_order(self, type_name):
+        if type_name == "DataSourceUniform":
+            return self.V10_SOURCE_FIELD_ORDER
+        if type_name in ("DataTweakFloat", "DataTweakFloat3", "DataTweakFloat4"):
+            return self.V10_TWEAK_FIELD_ORDER
+        return None
+
+    def _map_child_objects(self, fields, transform):
+        """Apply a transform to nested objects while preserving unchanged identities."""
+        out = None
+        for i, field in enumerate(fields):
+            value = field[2]
+            mapped_value = value
+            if value[0] == "object" and value[1][1] is not None:
+                mapped = transform(value[1])
+                if mapped is not value[1]:
+                    mapped_value = ("object", mapped)
+            elif value[0] == "array" and value[1][0] == "object":
+                elements = value[1][1]
+                mapped_elements = None
+                for j, element in enumerate(elements):
+                    mapped = transform(element[1]) if element[0] == "object" and element[1][1] is not None else element[1]
+                    if mapped is not element[1]:
+                        if mapped_elements is None:
+                            mapped_elements = list(elements[:j])
+                        mapped_elements.append(("object", mapped))
+                    elif mapped_elements is not None:
+                        mapped_elements.append(element)
+                if mapped_elements is not None:
+                    mapped_value = ("array", ("object", mapped_elements))
+            if mapped_value is not value:
+                if out is None:
+                    out = list(fields[:i])
+                out.append(field[:2] + (mapped_value,) + field[3:])
+            elif out is not None:
+                out.append(field)
+        return fields if out is None else out
+
     def _needs_transform(self, obj_name):
         if not obj_name:
             return False
@@ -48,11 +99,6 @@ class HelperMixin:
             fields[idx] = (name, type_code, value)
 
     def _remove_field(self, fields, name):
-        idx = self._find_field_index(fields, name)
-        if idx is not None:
-            fields.pop(idx)
-
-    def _remove_field_simple(self, fields, name):
         idx = self._find_field_index(fields, name)
         if idx is not None:
             fields.pop(idx)
@@ -164,4 +210,3 @@ class HelperMixin:
         if not all(48 <= b <= 57 or 65 <= b <= 90 or 97 <= b <= 122 or b == 95 for b in name_bytes):
             return False
         return True
-

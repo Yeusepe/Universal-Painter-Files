@@ -67,11 +67,3 @@ def test_color_management_registry_gate():
             assert out[0][2] == expected, (target_format, out)
     finally:
         runtime.PROFILE = old_profile
-
-
-if __name__ == "__main__":
-    test_drop_unknown_identity_and_drop()
-    test_narrow_identity_and_change()
-    test_project_identity_and_reorder()
-    test_color_management_registry_gate()
-    print("identity self-check passed")

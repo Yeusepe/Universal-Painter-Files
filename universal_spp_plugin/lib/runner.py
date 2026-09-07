@@ -2,7 +2,6 @@
 so it is unit-testable headless. Data crosses the boundary as files + one JSON blob."""
 import os
 import sys
-import json
 import subprocess
 
 _PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -98,14 +97,6 @@ def ensure_association(painter_exe):
     return True
 
 
-def run_plan(uspp, target):
-    """-> dict (the plan JSON). Raises RuntimeError with stderr on hard failure."""
-    r = _run("plan", "--uspp", uspp, "--target", target)
-    if r.returncode not in (0,):
-        raise RuntimeError(r.stderr or f"plan exited {r.returncode}")
-    return json.loads(r.stdout)
-
-
 def plan_args(uspp, target):
     """Build argv/env for an event-driven compatibility check in Painter."""
     return _argv("plan", "--uspp", uspp, "--target", target), {}
@@ -150,13 +141,3 @@ def pack_args(spp, out_uspp, raster_capture_dir=None, raster_budget_mb=None):
         if raster_budget_mb is not None:
             argv.extend(["--raster-budget-mb", str(int(raster_budget_mb))])
     return argv, {}
-
-
-if __name__ == "__main__":
-    # headless smoke: build argv only (no exe needed)
-    os.environ["USPP_TOOL"] = "C:/Program Files/x/uspp_tool.py"
-    assert _argv("plan", "--uspp", "a.uspp") == [sys.executable, "C:/Program Files/x/uspp_tool.py", "plan", "--uspp", "a.uspp"], _argv("plan")
-    os.environ["USPP_TOOL"] = "C:/Program Files/x/uspp_tool.exe"
-    assert _argv("info") == ["C:/Program Files/x/uspp_tool.exe", "info"], _argv("info")
-    del os.environ["USPP_TOOL"]
-    print("runner argv self-check OK; tool_path ->", tool_path())

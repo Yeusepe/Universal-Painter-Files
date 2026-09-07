@@ -8,8 +8,10 @@ members and the value-kind/type-code each member uses. This becomes the schema
 the downgrader projects v11 objects onto (drop members v10 doesn't have, reorder
 to v10 order) -- generic for any file.
 
-Usage: python debug/extract_v10_schema.py [glob ...]  > schema.json
+Usage: python debug/extract_v10_schema.py "path/to/reference-projects/*.spp"
+Writes v10_schema.json beside this script. Input files or globs are required.
 """
+import argparse
 import h5py, struct, sys, glob, json, os, collections
 
 PRIM={1:4,2:8,3:12,4:16,5:4,6:8,7:12,8:16,9:8,0x0A:1,0x0B:4,0x0C:8,0x0D:36,0x0E:64,0x0F:8,0x15:8,16:32,21:8}
@@ -76,14 +78,14 @@ def process(path):
     f.visititems(vi); f.close(); return n
 
 if __name__=="__main__":
-    pats = sys.argv[1:] or [
-        r"Original_Versions/*.spp", r"Simple PLane.spp",
-        r"samples/*_v10*.spp", r"samples/Jammer_v10.spp",
-        r"Textures_v10*.spp", r"v10 no dic.spp",
-    ]
+    ap = argparse.ArgumentParser(description="Extract a v10 HBO schema from native reference files.")
+    ap.add_argument("inputs", nargs="+", help="native v10 .spp files or glob patterns")
+    pats = ap.parse_args().inputs
     files=[]
     for p in pats: files+=glob.glob(p)
     files=sorted(set(files))
+    if not files:
+        ap.error("no reference files matched the supplied inputs")
     total=0
     for f in files:
         c=process(f); total+=c

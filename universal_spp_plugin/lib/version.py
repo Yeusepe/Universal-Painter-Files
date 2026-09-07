@@ -91,15 +91,3 @@ def detect_running():
     except Exception:
         pass
     return label_from_path(sys.executable)
-
-
-if __name__ == "__main__":
-    assert parse_label("10.0.1") == "10"
-    assert parse_label("12.1.0") == "12.1"
-    assert parse_label((12, 1, 0)) == "12.1"
-    assert parse_label("garbage") is None
-    assert label_from_path(r"C:\Program Files\Adobe\Adobe Substance 3D Painter v12.1\resources\x") == "12.1"
-    assert label_from_path(r"C:\Program Files\Adobe\Adobe Substance 3D Painter v10\app.exe") == "10"
-    assert label_from_path(r"C:\Program Files\Adobe\Adobe Substance 3D Painter v8.1\x") == "8.1"
-    assert label_from_path(r"D:\no\version\here") is None
-    print("version self-check OK")

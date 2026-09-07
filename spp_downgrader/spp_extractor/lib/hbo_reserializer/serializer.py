@@ -422,28 +422,8 @@ class HBOSerializer(HelperMixin, ReaderMixin, InlineWriterMixin, RegistryWriterM
             obj_overrides = self._overrides.get(obj_def.name, {})
             omit_members = set(obj_overrides.get('__omit__', []))
             members = obj_def.members
-            if obj_def.name in ("DataSourceUniform", "DataTweakFloat", "DataTweakFloat3", "DataTweakFloat4"):
-                if obj_def.name == "DataSourceUniform":
-                    order = {
-                        "channelTypes": 0,
-                        "color": 1,
-                        "opacity": 2,
-                        "uid": 3,
-                        "tags": 4,
-                        "uvGrid": 5,
-                        "uvSamplingWrap": 6,
-                        "uvTransformation": 7,
-                    }
-                else:
-                    order = {
-                        "identifier": 0,
-                        "uid": 1,
-                        "value": 2,
-                        "urlToSbsRes": 3,
-                        "uvGrid": 4,
-                        "uvSamplingWrap": 5,
-                        "uvTransformation": 6,
-                    }
+            order = self._v10_field_order(obj_def.name)
+            if order:
                 members = sorted(
                     enumerate(members),
                     key=lambda item: (order.get(item[1].name, 999), item[0]),
@@ -537,28 +517,8 @@ class HBOSerializer(HelperMixin, ReaderMixin, InlineWriterMixin, RegistryWriterM
         if obj_name and self._needs_transform(obj_name):
             obj_name, fields = self._apply_downgrade_transforms(obj_name, fields)
 
-        if obj_name in ("DataSourceUniform", "DataTweakFloat", "DataTweakFloat3", "DataTweakFloat4"):
-            if obj_name == "DataSourceUniform":
-                order = {
-                    "channelTypes": 0,
-                    "color": 1,
-                    "opacity": 2,
-                    "uid": 3,
-                    "tags": 4,
-                    "uvGrid": 5,
-                    "uvSamplingWrap": 6,
-                    "uvTransformation": 7,
-                }
-            else:
-                order = {
-                    "identifier": 0,
-                    "uid": 1,
-                    "value": 2,
-                    "urlToSbsRes": 3,
-                    "uvGrid": 4,
-                    "uvSamplingWrap": 5,
-                    "uvTransformation": 6,
-                }
+        order = self._v10_field_order(obj_name)
+        if order:
             fields = sorted(
                 enumerate(fields),
                 key=lambda item: (order.get(item[1][0], 999), item[0]),

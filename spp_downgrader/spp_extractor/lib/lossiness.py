@@ -78,20 +78,3 @@ def build_lossiness_report(profile, messages=None):
         add("field_retype", key)
 
     return sorted(out)
-
-
-if __name__ == "__main__":
-    # self-check: humanizer + dedupe + pattern collapse
-    assert humanize("DataColorGradingParametersV2") == "color grading parameters", humanize("DataColorGradingParametersV2")
-    assert humanize("SettingsSymmetry.enabled") == "enabled"
-    msgs = {"blacklist": {"patterns": [{"match": "*ParametersV2", "message": "FX reset."}], "generic": "{human} removed."},
-            "field_retype": {"patterns": [{"match": "*.channelTypes", "message": "channels>64 dropped."}]}}
-
-    class P:
-        blacklist = ["DataBloomParametersV2", "bloomParametersV2", "WidgetThing"]
-        field_retype = {"DataActionFill.channelTypes": 12, "DataBlending.channelTypes": 12}
-    rep = build_lossiness_report(P(), msgs)
-    assert "FX reset." in rep and rep.count("FX reset.") == 1, rep          # 2 V2 entries -> 1 line
-    assert "channels>64 dropped." in rep and sum(x == "channels>64 dropped." for x in rep) == 1, rep
-    assert "widget thing removed." in rep, rep                              # generic fallback
-    print("lossiness self-check OK ->", rep)

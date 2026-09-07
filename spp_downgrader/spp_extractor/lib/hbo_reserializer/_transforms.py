@@ -190,12 +190,6 @@ class TransformMixin:
             mask &= mask - 1
         return ("array", ("object", elems))
 
-    def _build_empty_stack_actions(self):
-        if "DataStackActions" not in self.type_map:
-            return ("object", ("DataStackActions", []))
-        actions_tc = self._get_member_type("DataStackActions", "actions") or self.CODE_ARRAY
-        return ("object", ("DataStackActions", [("actions", actions_tc, ("array", ("object", [])), False)]))
-
     def _dedupe_tweak_uids(self, elems):
         """Ensure every tweak in a BakingTweakList has a unique `uid`. Splitting a
         DataTweakFloat2 (e.g. TonemappingBounds) into two DataTweakFloat (Min/Max) copies the
@@ -396,9 +390,6 @@ class TransformMixin:
                 out.append((name, tcode, value, False))
         return out
 
-    def _strip_fields(self, fields):
-        return [(name, tcode, value) for name, tcode, value, _ in fields]
-
     def _strip_fields_recursive(self, obj):
         obj_name, fields = obj
         if fields is None:
@@ -489,40 +480,9 @@ class TransformMixin:
         obj_name, fields = obj
         if fields is None:
             return obj
-        rec = None
-        for i, f in enumerate(fields):
-            value = f[2]
-            kind = value[0]
-            nv = value
-            if kind == "object":
-                child = value[1]
-                if child[1] is not None:
-                    nchild = self._apply_transforms_recursive(child, keep_overrides)
-                    if nchild is not child:
-                        nv = ("object", nchild)
-            elif kind == "array":
-                elem_kind, elems = value[1]
-                if elem_kind == "object":
-                    nelems = None
-                    for j, elem in enumerate(elems):
-                        if elem[0] == "object" and elem[1][1] is not None:
-                            ne = self._apply_transforms_recursive(elem[1], keep_overrides)
-                            if ne is not elem[1]:
-                                if nelems is None:
-                                    nelems = list(elems[:j])
-                                nelems.append(("object", ne))
-                                continue
-                        if nelems is not None:
-                            nelems.append(elem)
-                    if nelems is not None:
-                        nv = ("array", ("object", nelems))
-            if nv is not value:
-                if rec is None:
-                    rec = list(fields[:i])
-                rec.append((f[0], f[1], nv) + tuple(f[3:]))
-            elif rec is not None:
-                rec.append(f)
-        base_fields = fields if rec is None else rec
+        base_fields = self._map_child_objects(
+            fields, lambda child: self._apply_transforms_recursive(child, keep_overrides)
+        )
 
         has_field_maps = (runtime.FIELD_RENAME or runtime.FIELD_RETYPE
                           or runtime.FIELD_REKIND or runtime.FIELD_VALUE_TRANSFORM)
@@ -542,7 +502,7 @@ class TransformMixin:
         new_name = runtime.TYPE_RENAME.get(obj_name, obj_name)
         if keep_overrides:
             return (new_name, self._normalize_fields(base_fields))
-        if rec is None and base_fields is fields and new_name == obj_name:
+        if base_fields is fields and new_name == obj_name:
             return obj
         return (new_name, base_fields)
 
@@ -685,43 +645,12 @@ class TransformMixin:
 
             return ("object", (tf_name, tf_fields))
 
-        rec = None
-        for i, (name, tcode, value) in enumerate(fields):
-            nv = value
-            kind = value[0]
-            if kind == "object":
-                child = value[1]
-                nchild = self._apply_targeted_overrides(child)
-                if nchild is not child:
-                    nv = ("object", nchild)
-            elif kind == "array":
-                elem_kind, elems = value[1]
-                if elem_kind == "object":
-                    nelems = None
-                    for j, elem in enumerate(elems):
-                        if elem[0] == "object":
-                            ne = self._apply_targeted_overrides(elem[1])
-                            if ne is not elem[1]:
-                                if nelems is None:
-                                    nelems = list(elems[:j])
-                                nelems.append(("object", ne))
-                                continue
-                        if nelems is not None:
-                            nelems.append(elem)
-                    if nelems is not None:
-                        nv = ("array", ("object", nelems))
-            if nv is not value:
-                if rec is None:
-                    rec = list(fields[:i])
-                rec.append((name, tcode, nv))
-            elif rec is not None:
-                rec.append(fields[i])
-        base_fields = fields if rec is None else rec
+        base_fields = self._map_child_objects(fields, self._apply_targeted_overrides)
 
         if obj_name not in ("DataStackActions", "DataSourceUniform", "DataTweakFloat", "Aluminum"):
-            return obj if rec is None else (obj_name, base_fields)
+            return obj if base_fields is fields else (obj_name, base_fields)
         # Own a mutable list before the in-place _set_field_simple/_reorder calls below.
-        fields = list(base_fields) if rec is None else base_fields
+        fields = list(base_fields) if base_fields is fields else base_fields
 
         if obj_name == "DataStackActions":
             uid = self._extract_uid((obj_name, fields))

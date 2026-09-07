@@ -2,7 +2,7 @@
 import struct
 from .models import MemberDef, ObjectDef
 try:
-    from .hbo_parser import find_all_dict_entries, refine_dict_boundaries
+    from ..hbo_parser import find_all_dict_entries, refine_dict_boundaries
 except Exception:
     find_all_dict_entries = None
     refine_dict_boundaries = None

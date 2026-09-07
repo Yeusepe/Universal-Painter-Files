@@ -1068,24 +1068,10 @@ class SPPBuilder:
             return PROFILE.blacklist, (PROFILE.target_max_data_version or 81)
         if self._downgrade_config is None:
             try:
-                config = load_config()
+                self._downgrade_config = load_config()
             except Exception:
-                config = None
-            self._downgrade_config = config
-        blacklist = []
-        max_data_version = 81
-        if self._downgrade_config is not None:
-            try:
-                dr = self._downgrade_config.dict_removal
-                if dr and dr.blacklist:
-                    blacklist = list(dr.blacklist)
-            except Exception:
-                blacklist = []
-            try:
-                max_data_version = int(self._downgrade_config.target_version.max_data_version)
-            except Exception:
-                max_data_version = 81
-        return blacklist, max_data_version
+                self._downgrade_config = ([], 81)
+        return self._downgrade_config
 
     def _get_target_data_version(self, dataset_path: str, hbo_header: Optional[Dict[str, Any]],
                                  max_data_version: Optional[int] = None) -> int:

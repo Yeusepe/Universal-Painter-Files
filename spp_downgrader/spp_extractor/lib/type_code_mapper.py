@@ -82,35 +82,3 @@ def map_type_code_v11_to_v10(type_name: str, v11_code: int) -> int:
     else:
         # Direct mapping
         return mapping
-
-
-def map_type_code_v10_to_v11(type_name: str, v10_code: int) -> int:
-    """
-    Map v10 type code to v11 type code (reverse mapping).
-
-    Args:
-        type_name: Name of the dict entry type
-        v10_code: Type code from v10 format
-
-    Returns:
-        Type code for v11 format
-    """
-    mapping = TYPE_CODE_MAPPINGS.get(type_name)
-
-    if mapping is None:
-        # Unknown - extract low 16 bits (common pattern)
-        return v10_code & 0xFFFF
-
-    if isinstance(mapping, tuple):
-        # Extract low 16 bits (v11 code)
-        high_bits, v11_code = mapping
-        # Verify high bits match
-        if (v10_code >> 16) == high_bits:
-            return v11_code
-        else:
-            # High bits don't match - extract anyway
-            return v10_code & 0xFFFF
-    else:
-        # Direct mapping - need to reverse lookup
-        # This is tricky - for now, extract low bits
-        return v10_code & 0xFFFF

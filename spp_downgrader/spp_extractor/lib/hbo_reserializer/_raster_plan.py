@@ -33,12 +33,6 @@ _LOCAL_CONTENT_PREFIXES = (
 )
 
 
-def _u32(raw):
-    if not raw or len(raw) < 4:
-        return None
-    return int.from_bytes(raw[:4], "little", signed=False)
-
-
 def _primitive_int(value):
     if not value or value[0] != "primitive":
         return None

@@ -1,7 +1,7 @@
 {
   "from": "12.1",
   "to": "12",
-  "_comment": "AUTO-MAPPED from v12.1.0.spp vs v12.0.0.spp. Review TODO entries; edit freely (this file is the source of truth).",
+  "_comment": "AUTO-MAPPED from v12.1.0.spp vs v12.0.0.spp. Also structurally verified with v12.1.4.spp on 2026-09-07; patch releases use the 12.1 format label. Review TODO entries; edit freely (this file is the source of truth).",
   "source_format": "registry",
   "target_format": "registry",
   "target_max_data_version": 89,

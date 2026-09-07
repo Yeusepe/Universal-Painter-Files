@@ -18,6 +18,7 @@ universal_spp_plugin/bin/uspp_tool/
 # Editor / OS
 .vscode/
 .idea/
+.claude/settings.local.json
 .ruff_cache/
 .DS_Store
 Thumbs.db

@@ -44,7 +44,7 @@ DEF_SCHEMA = os.path.join(ROOT, "spp_extractor", "lib")
 # --------------------------------------------------------------- version handling
 
 def parse_version(path):
-    """v8.1.0 -> '8.1', v9.0.0 -> '9', v12.1.0 -> '12.1' (drop trailing .0 groups)."""
+    """Read the full revision: v12.1.0 -> '12.1', v12.1.4 -> '12.1.4'."""
     m = re.search(r"v?(\d+)(?:\.(\d+))?(?:\.(\d+))?", os.path.basename(path))
     if not m:
         return None
@@ -56,6 +56,35 @@ def parse_version(path):
 
 def vkey(label):
     return tuple(int(x) for x in label.split("."))
+
+
+def profile_version(revision):
+    """Match the converter's major/minor format labels; patches share a profile."""
+    parts = list(vkey(revision)[:2])
+    while len(parts) > 1 and parts[-1] == 0:
+        parts.pop()
+    return ".".join(str(p) for p in parts)
+
+
+def corpus_references(corpus):
+    """Use the newest saved patch for each format, retaining older files on disk.
+
+    A corpus containing both v12.1.0.spp and v12.1.4.spp must test 12.1.4 -> 12,
+    not invent a 12.1.4 -> 12.1 downgrade that the converter never performs.
+    """
+    latest = {}
+    for path in sorted(glob.glob(os.path.join(corpus, "v*.spp"))):
+        revision = parse_version(path)
+        if revision is None:
+            raise ValueError(f"Cannot read a version from corpus file: {path}")
+        label = profile_version(revision)
+        if label not in latest or vkey(revision) > vkey(latest[label][0]):
+            latest[label] = (revision, path)
+    return [(label, latest[label][1]) for label in sorted(latest, key=vkey)]
+
+
+def print_corpus(labels):
+    print("corpus:", [f"{label} ({os.path.basename(path)})" for label, path in labels])
 
 
 # --------------------------------------------------------------- schema / versions
@@ -347,8 +376,13 @@ def write_outputs(prof, store, from_v, to_v, defaults, schema, args):
 
 
 def run_pair(src, tgt, args, today):
-    fv = args.vfrom or parse_version(src)
-    tv = args.vto or parse_version(tgt)
+    fv = profile_version(args.vfrom or parse_version(src))
+    tv = profile_version(args.vto or parse_version(tgt))
+    if vkey(fv) <= vkey(tv):
+        raise ValueError(
+            "Mapping requires a newer major/minor source format. Patch releases "
+            "share a profile; compare the newest patch with an older major/minor reference."
+        )
     print(f"\n=== mapping v{fv} (src {os.path.basename(src)}) -> v{tv} (tgt {os.path.basename(tgt)}) ===")
     prof, store, todos, summary = map_pair(src, tgt, fv, tv, args, today)
     # recompute target schema + per-member defaults for writing
@@ -387,10 +421,12 @@ def cmd_verify(corpus, args):
     result has no foreign types, no unknown primitives, matching versions, and every
     field conforms to the native lower file's schema. Ground truth = the native lower
     file (same content). No Painter needed."""
-    files = sorted(glob.glob(os.path.join(corpus, "v*.spp")), key=lambda p: vkey(parse_version(p)))
-    labels = [(parse_version(f), f) for f in files]
+    labels = corpus_references(corpus)
+    if len(labels) < 2:
+        print("Verification requires at least two distinct major/minor reference versions.")
+        return False
     allpass = True
-    print("corpus:", [l for l, _ in labels])
+    print_corpus(labels)
     for (lo_l, lo_f), (hi_l, hi_f) in zip(labels, labels[1:]):
         pname = f"v{hi_l}_to_v{lo_l}"
         R, prof = _reload_with_profile(pname)
@@ -423,7 +459,8 @@ def cmd_verify(corpus, args):
                 dvmism.append(f"{tname}: built={bdv} native={nat[tname][1][2]}")
         ok = not (foreign or extra or missing or decfail or dvmism)
         allpass = allpass and ok
-        print(f"\n{'PASS' if ok else 'FAIL'}  {pname}")
+        print(f"\n{'PASS' if ok else 'FAIL'}  {pname} "
+              f"({os.path.basename(hi_f)} -> {os.path.basename(lo_f)})")
         if foreign:
             print("   foreign types:", sorted(foreign))
         if missing:
@@ -458,7 +495,7 @@ def main():
     ap = argparse.ArgumentParser(description="Auto-map .spp version differences into a migration profile.")
     ap.add_argument("src", nargs="?", help="source (higher version) .spp")
     ap.add_argument("tgt", nargs="?", help="target (lower version) .spp")
-    ap.add_argument("--corpus", help="directory of v*.spp; map every adjacent pair")
+    ap.add_argument("--corpus", help="directory of v*.spp; use the latest patch per major/minor format")
     ap.add_argument("--from", dest="vfrom", help="override source version label")
     ap.add_argument("--to", dest="vto", help="override target version label")
     ap.add_argument("--non-interactive", action="store_true")
@@ -493,9 +530,10 @@ def main():
         _s.exit(0 if cmd_verify(a.corpus, a) else 1)
 
     if a.corpus:
-        files = sorted(glob.glob(os.path.join(a.corpus, "v*.spp")), key=parse_version and (lambda p: vkey(parse_version(p))))
-        labels = [(parse_version(f), f) for f in files]
-        print("corpus versions:", [l for l, _ in labels])
+        labels = corpus_references(a.corpus)
+        if len(labels) < 2:
+            ap.error("mapping requires at least two distinct major/minor reference versions")
+        print_corpus(labels)
         summaries = []
         for (lo_l, lo_f), (hi_l, hi_f) in zip(labels, labels[1:]):
             a.vfrom, a.vto = hi_l, lo_l        # downgrade: higher -> lower

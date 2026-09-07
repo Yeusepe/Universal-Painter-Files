@@ -8,38 +8,6 @@ class RegistryWriterMixin:
     def _reg_sig(name, fields):
         return (name or "", tuple((fn, tc) for fn, tc, _ in fields))
 
-    def _collect_reg_typedefs(self, root):
-        """Depth-first collect of every distinct (name, [(field,tcode)]) typedef, in
-        first-seen order, so objects can reference their type by table index."""
-        order = []          # list of (name, fields) preserving the field tuples
-        sigs = {}           # sig -> index
-        def add(name, fields):
-            s = self._reg_sig(name, fields)
-            if s not in sigs:
-                sigs[s] = len(order)
-                order.append((name, fields))
-        def visit_obj(obj, depth=0):
-            if not obj or obj[1] is None or depth > self.MAX_RECURSION:
-                return
-            name, fields = obj
-            if name == "" and not fields:
-                return
-            add(name, fields)
-            for _fn, _tc, val in fields:
-                visit_val(val, depth + 1)
-        def visit_val(val, depth):
-            if not val:
-                return
-            if val[0] == "object":
-                if not self._is_null_obj(val):
-                    visit_obj(val[1], depth)
-            elif val[0] == "array":
-                for e in val[1][1]:
-                    if e and e[0] == "object" and not self._is_null_obj(e):
-                        visit_obj(e[1], depth)
-        visit_obj(root)
-        return order, sigs
-
     def _write_reg_typedef(self, dst, name, fields):
         dst.write(struct.pack('<I', 0xFFFFFFFF))
         nb = (name or "").encode('utf-8', 'replace')
@@ -122,4 +90,3 @@ class RegistryWriterMixin:
         if mapped is None:
             return v11_code
         return mapped
-

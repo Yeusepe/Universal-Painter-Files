@@ -54,11 +54,6 @@ class DictEntry:
     estimated_end_offset: int   # Estimated end (to next entry or reasonable bound)
     dataset_name: str = ""      # Which dataset this came from
 
-    @property
-    def total_header_size(self) -> int:
-        """Size of the dict header (length prefix + name + type code)."""
-        return 4 + self.name_length + 4
-
     def __repr__(self) -> str:
         return f"DictEntry('{self.type_name}' at 0x{self.length_prefix_offset:X})"
 
@@ -206,7 +201,6 @@ def find_all_dict_entries(data: bytes, dataset_name: str = "") -> List[DictEntry
 
     return entries
 
-
 def refine_dict_boundaries(data: bytes, entries: List[DictEntry]) -> List[DictEntry]:
     """
     Refine dict boundaries by looking for common HBO end markers or
@@ -218,141 +212,3 @@ def refine_dict_boundaries(data: bytes, entries: List[DictEntry]) -> List[DictEn
             entry.estimated_end_offset = entry.type_code_offset + 4
 
     return entries
-
-
-def find_dict_by_name(entries: List[DictEntry], name: str) -> List[DictEntry]:
-    """
-    Find all dict entries with a specific type name.
-
-    Args:
-        entries: List of DictEntry objects
-        name: Dict type name to search for
-
-    Returns:
-        List of matching DictEntry objects
-    """
-    return [e for e in entries if e.type_name == name]
-
-
-def find_dicts_by_pattern(entries: List[DictEntry], pattern: str) -> List[DictEntry]:
-    """
-    Find all dict entries matching a regex pattern.
-
-    Args:
-        entries: List of DictEntry objects
-        pattern: Regex pattern to match against type names
-
-    Returns:
-        List of matching DictEntry objects
-    """
-    regex = re.compile(pattern)
-    return [e for e in entries if regex.match(e.type_name)]
-
-
-def get_dict_info(data: bytes, entry: DictEntry, context_bytes: int = 32) -> dict:
-    """
-    Get detailed information about a dict entry including context.
-
-    Args:
-        data: Raw binary data
-        entry: DictEntry to analyze
-        context_bytes: Number of bytes of context to include
-
-    Returns:
-        Dictionary with detailed information
-    """
-    start = max(0, entry.length_prefix_offset - context_bytes)
-
-    return {
-        'type_name': entry.type_name,
-        'length_prefix_offset': entry.length_prefix_offset,
-        'name_offset': entry.name_offset,
-        'name_length': entry.name_length,
-        'type_code': entry.type_code,
-        'type_code_offset': entry.type_code_offset,
-        'estimated_end_offset': entry.estimated_end_offset,
-        'estimated_size': entry.estimated_end_offset - entry.length_prefix_offset,
-        'context_before': data[start:entry.length_prefix_offset].hex(),
-        'entry_header': data[entry.length_prefix_offset:entry.type_code_offset + 4].hex(),
-        'dataset_name': entry.dataset_name
-    }
-
-
-def print_dict_summary(entries: List[DictEntry]) -> None:
-    """Print a summary of all dict entries."""
-    print(f"\nFound {len(entries)} dict entries:")
-    print("-" * 70)
-    for entry in entries:
-        size = entry.estimated_end_offset - entry.length_prefix_offset
-        print(f"  {entry.type_name:40s} @ 0x{entry.length_prefix_offset:06X} "
-              f"(~{size} bytes, code={entry.type_code})")
-
-
-def analyze_hbo_stream(data: bytes, dataset_name: str = "") -> dict:
-    """
-    Perform complete analysis of an HBO binary stream.
-
-    Args:
-        data: Raw binary data
-        dataset_name: Name of the dataset
-
-    Returns:
-        Dictionary with complete analysis
-    """
-    header = parse_hbo_header(data)
-    if not header:
-        return {'valid': False, 'error': 'Invalid HBO header'}
-
-    entries = find_all_dict_entries(data, dataset_name)
-
-    return {
-        'valid': True,
-        'header': {
-            'magic': f"0x{header.magic:08X}",
-            'version_check': header.version_check,
-            'data_version': header.data_version
-        },
-        'size': len(data),
-        'dict_count': len(entries),
-        'dict_entries': entries,
-        'unique_types': list(set(e.type_name for e in entries))
-    }
-
-
-# Testing
-if __name__ == "__main__":
-    import h5py
-
-    print("HBO Parser Module - Test Run")
-    print("=" * 70)
-
-    # Test with actual file
-    try:
-        with h5py.File('Textures_v10_final2.spp', 'r') as f:
-            # Test with baking.ini
-            data = bytes(f['baking/baking.ini'][()])
-            print(f"\nAnalyzing: baking/baking.ini ({len(data)} bytes)")
-
-            analysis = analyze_hbo_stream(data, 'baking/baking.ini')
-            if analysis['valid']:
-                print(f"  Header: {analysis['header']}")
-                print(f"  Dict entries: {analysis['dict_count']}")
-                print_dict_summary(analysis['dict_entries'])
-
-                # Find BakingCommonParameters specifically
-                entries = analysis['dict_entries']
-                baking_params = find_dict_by_name(entries, 'BakingCommonParameters')
-                if baking_params:
-                    print("\n  BakingCommonParameters found:")
-                    for e in baking_params:
-                        info = get_dict_info(data, e)
-                        print(f"    Offset: 0x{info['length_prefix_offset']:X}")
-                        print(f"    Size: ~{info['estimated_size']} bytes")
-                        print(f"    Type code: {info['type_code']}")
-    except FileNotFoundError:
-        print("Test file not found. Module loaded successfully.")
-    except Exception as e:
-        print(f"Error: {e}")
-
-    print("\n" + "=" * 70)
-    print("HBO Parser Module loaded successfully!")

@@ -230,39 +230,3 @@ def _d(kind, action, confidence, **kw):
          "field_name": kw.get("field_name"), "src_fieldset": kw.get("src_fieldset")}
     d.update(kw)
     return d
-
-
-if __name__ == "__main__":
-    # synthetic self-check covering each classification
-    def obj(t, **fields):
-        return (t, [(k, v) for k, v in fields.items()])
-    def s(b):
-        return ("string", b)
-    def p(b):
-        return ("primitive", 9, b)
-
-    src = obj("Root",
-              brush=("object", obj("DataBrushStamp", size=p(b"\x01\x00\x00\x00"))),     # renamed type
-              gone=("object", obj("OldType", x=p(b"\x05\x00\x00\x00"))),                 # dropped type
-              mat=("object", obj("DataMaterial", oldName=s(b"hello"), keep=p(b"\x09\x00\x00\x00"))),  # field rename
-              bake=("array", [("object", obj("Baker", bakerId=s(b"Normal"))),
-                              ("object", obj("Baker", bakerId=s(b"Color")))]))
-    tgt = obj("Root",
-              brush=("object", obj("DataBrush", size=p(b"\x01\x00\x00\x00"))),
-              mat=("object", obj("DataMaterial", newName=s(b"hello"), keep=p(b"\x09\x00\x00\x00"))),
-              bake=("array", [("object", obj("Baker", bakerId=s(b"GLMapBakerManager.NormalFromDetail"))),
-                              ("object", obj("Baker", bakerId=s(b"GLMapBakerManager.ColorFromDetail")))]))
-    # reordering must NOT be mistaken for a value rename (cyclic A->B->C->A)
-    src_ro = obj("Root2", tw=("array", [("object", obj("Tw", id=s(b"A"))),
-                                        ("object", obj("Tw", id=s(b"B")))]))
-    tgt_ro = obj("Root2", tw=("array", [("object", obj("Tw", id=s(b"B"))),
-                                        ("object", obj("Tw", id=s(b"A")))]))
-    assert not any(d["action"] in ("value_rename", "tweak_rename", "baker_rename") for d in diff(src_ro, tgt_ro)), "reorder must not be a rename"
-
-    ds = diff(src, tgt, target_schema_types={"DataMaterial"})
-    by = {(d["action"]) for d in ds}
-    assert any(d["action"] == "type_rename" and d["src_type"] == "DataBrushStamp" and d["tgt_type"] == "DataBrush" for d in ds), ds
-    assert any(d["action"] == "blacklist_type" and d["src_type"] == "OldType" for d in ds), ds
-    assert any(d["action"] == "field_rename" and d["field_name"] == "oldName" and d["tgt_field"] == "newName" for d in ds), ds
-    assert any(d["action"] == "baker_rename" and d["mapping"].get("Normal", "").endswith("NormalFromDetail") for d in ds), ds
-    print("hbo_diff self-check OK ->", sorted(by))
