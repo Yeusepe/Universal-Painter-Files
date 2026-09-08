@@ -70,6 +70,11 @@ The plugin packs from the `.spp` file on disk. If Painter reports unsaved
 changes, the plugin tries to save first, but the hard requirement is still that
 the project already has a real file path.
 
+Texture sets left disabled after mesh reassignment are retained in the archive.
+They are skipped during raster capture because they have no mesh to render.
+Capture failures on texture sets still assigned to the mesh continue to stop
+the export and report the missing pixels.
+
 ### Open a `.uspp` or `.spp`
 
 1. Choose **Universal > Open Universal...**.

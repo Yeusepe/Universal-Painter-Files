@@ -26,6 +26,7 @@ function _indexDocument() {
   var doc = alg.mapexport.documentStructure()
   var byUid = {}
   var stacks = []
+  var materials = []
 
   function visitLayer(layer, material, stack, materialIndex, stackIndex) {
     byUid[String(layer.uid)] = {
@@ -44,6 +45,7 @@ function _indexDocument() {
 
   for (var mi in doc.materials) {
     var material = doc.materials[mi]
+    materials.push(material.name)
     var materialIndex = parseInt(mi, 10)
     for (var si in material.stacks) {
       var stack = material.stacks[si]
@@ -60,7 +62,7 @@ function _indexDocument() {
       }
     }
   }
-  return {byUid: byUid, stacks: stacks}
+  return {byUid: byUid, stacks: stacks, materials: materials}
 }
 
 function _exportConfig(kind, channel) {
@@ -119,6 +121,11 @@ function _assetFromCached(base, req) {
     item[k] = base[k]
   }
   item.request_id = req.id
+  // Export indexes omit disabled texture sets; replacements address the saved graph.
+  var materialIndex = _requestIndex(req, "material_index", "DataDocument.materials")
+  if (materialIndex !== null) {
+    item.material_index = materialIndex
+  }
   return item
 }
 
@@ -127,7 +134,10 @@ function _captureStackChannels(req, index, outDir, assets, cache) {
   var stackIndex = _requestIndex(req, "stack_index", "DataMaterial.stacks")
   for (var s = 0; s < index.stacks.length; ++s) {
     var stack = index.stacks[s]
-    if (materialIndex !== null && stack.material_index !== materialIndex) {
+    var matchesMaterial = req.material_name
+      ? stack.material === req.material_name
+      : materialIndex === null || stack.material_index === materialIndex
+    if (!matchesMaterial) {
       continue
     }
     if (stackIndex !== null && stack.stack_index !== stackIndex) {
@@ -318,6 +328,7 @@ function capture(planPath, manifestPath, preparationPath, optionsPath) {
   var index = _indexDocument()
   var outDir = _dir(manifestPath)
   var assets = []
+  var skipped = []
   var warnings = []
   var requests = plan.requests || []
   var cache = {}
@@ -325,6 +336,16 @@ function capture(planPath, manifestPath, preparationPath, optionsPath) {
   try {
     for (var i = 0; i < requests.length; ++i) {
       var req = requests[i]
+      // Disabled texture sets remain in the saved project but have no mesh to render.
+      // An unnamed legacy request or a missing layer on an active set must still fail.
+      if (req.material_name && index.materials.indexOf(req.material_name) === -1) {
+        skipped.push({
+          request_id: req.id,
+          material_name: req.material_name,
+          reason: "unused_texture_set"
+        })
+        continue
+      }
       var cap = req.capture || {}
       var selector = cap.selector || []
       var uid = selector.length ? selector[0] : req.layer_uid
@@ -358,6 +379,7 @@ function capture(planPath, manifestPath, preparationPath, optionsPath) {
     version: 1,
     source_plan: planPath,
     requests: requests,
+    skipped_requests: skipped,
     assets: assets,
     warnings: warnings
   })
