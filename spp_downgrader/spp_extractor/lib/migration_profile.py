@@ -190,6 +190,10 @@ def _compose(chain):
             if x not in bl:
                 bl.append(x)
     merged["blacklist"] = bl
+    # Keep resource-version caps from earlier steps; later target values still win.
+    merged['data_version_map'] = {}
+    for step in chain:
+        merged['data_version_map'].update(step.data_version_map)
     for key in ("type_rename", "baking_tweak_rename", "baking_baker_id_rename", "dataset_renames", "field_rename"):
         acc = {}
         for step in chain:

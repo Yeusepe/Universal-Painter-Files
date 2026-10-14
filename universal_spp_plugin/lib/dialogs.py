@@ -80,7 +80,7 @@ def confirm_lossy(plan):
         items.append("Some unsupported data may be changed.")
     bullets = "\n".join(f"  - {f}" for f in items)
     text = (
-        f"This project was created in Substance Painter v{plan['source_version']}, "
+        f"This project was saved in Substance Painter v{plan.get('source_revision') or plan['source_version']}, "
         f"and will be converted to v{plan['target_version']}.\n\n"
         "This is a one-way, lossy conversion. The following will be lost or changed:\n\n"
         f"{bullets}\n\n"

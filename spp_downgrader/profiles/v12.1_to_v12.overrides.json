@@ -1,11 +1,17 @@
 {
   "_comment": "Hand-authored additions to the auto-generated v12.1_to_v12 profile (the thin corpus misses types real projects use). v12.1 introduced HBO primitive code 22 (128-bit channel masks) -> narrow to code 12 for all older versions (primitive_retype, blanket over every code-22). Single-channel 'channelType' fields became enum indices (code 9) in v12.1 and must become bitmask 1<<n (code 21) for older versions; DataChannel.type is auto-detected, DataProceduralInput.channelType is corpus-absent so added here. field_rekind: the base profile rekinds DataActionPaint.sourceTransparent object->array (v12.1 stores a single source object; v12-and-older expect an array). DataActionEraser and DataActionSmudge have the identical sourceTransparent member but the corpus lacked them, so the base missed them -- leaving an object where v8.1's loader reads an array crashes it (null deref). Same boundary, same family.",
   "primitive_retype": { "22": 12 },
+  "data_version_map": { "resources/*.spexp": 4 },
   "field_rekind": {
     "DataActionEraser.sourceTransparent": "array",
     "DataActionSmudge.sourceTransparent": "array"
   },
   "field_value_transform": {
+    "DataExportChannel.mapId": {
+      "op": "channel_variant_to_legacy_bitmask",
+      "channel_map": { "74": 34, "75": 35, "76": 36, "77": 37 }
+    },
+    "SettingsSolo.channelType": { "op": "channel_enum_to_legacy_bitmask", "code": 12 },
     "DataProceduralInput.channelType": { "op": "channel_enum_to_legacy_bitmask", "code": 21 }
   }
 }

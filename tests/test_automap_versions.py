@@ -7,6 +7,10 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest import mock
+import struct
+
+import h5py
+import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +22,30 @@ SPEC.loader.exec_module(automap)
 
 
 class AutomapVersionTests(unittest.TestCase):
+    def test_unresolved_difference_is_reported_without_crashing_noninteractive_mapping(self):
+        difference = dict(kind='TYPE', action='ambiguous', confidence='LOW', src_type='NewType')
+        todos = []
+        with mock.patch.object(automap.DS, 'resolve', return_value=None):
+            automap._apply(difference, {}, {}, argparse.Namespace(non_interactive=True),
+                           '2026-10-14', todos)
+        self.assertEqual(len(todos), 1)
+        self.assertIn('needs review', todos[0])
+
+    def test_saved_revision_overrides_misleading_filename_and_corpus_accepts_any_name(self):
+        with tempfile.TemporaryDirectory() as td:
+            for filename, version in [('v8.1.spp', (12, 1, 5)), ('Butterfly.spp', (11, 1, 0))]:
+                records = []
+                for key, value in zip(('major', 'minor', 'patch'), version):
+                    name = f'versionAtLastSave/{key}'.encode('utf-16-be')
+                    records.append(struct.pack('>I', len(name)) + name + b'\x00\x00\x00\x02\x00'
+                                   + struct.pack('>I', value))
+                with h5py.File(Path(td) / filename, 'w') as f:
+                    f.create_dataset('projectsettings.ini', data=np.frombuffer(
+                        struct.pack('>I', len(records)) + b''.join(records), dtype='u1'))
+            self.assertEqual(automap.parse_version(Path(td) / 'v8.1.spp'), '12.1.5')
+            self.assertEqual([(label, Path(path).name) for label, path in automap.corpus_references(td)],
+                             [('11.1', 'Butterfly.spp'), ('12.1', 'v8.1.spp')])
+
     def test_corpus_selects_newest_patch_numerically_without_a_patch_edge(self):
         with tempfile.TemporaryDirectory() as td:
             for name in ("v12.1.0.spp", "v12.1.4.spp", "v12.1.10.spp",

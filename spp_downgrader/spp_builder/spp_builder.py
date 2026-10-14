@@ -18,6 +18,7 @@ import json
 import zipfile
 import tempfile
 import struct
+import fnmatch
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 
@@ -35,6 +36,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'spp_extractor'
 from hbo_encoder import encode_to_hbo
 from lib.config_manager import load_config
 from lib.hbo_reserializer import HBOSerializer
+from spp_extractor import _version_value_offset
 
 
 def _emit_progress(frac, msg):
@@ -577,7 +579,9 @@ class SPPBuilder:
                 # Strip v11-only settings records (e.g. projectUUID) that v10's
                 # ProjectManagement loader does not expect.
                 raw_data = self._strip_projectsettings_fields(raw_data, ('projectUUID',))
-            raw_data = self._patch_projectsettings_ini(raw_data, self.target_major, 0)
+            target = _version_key(PROFILE.data.get('to'))
+            target_minor = target[1] if target and target[0] == self.target_major else 0
+            raw_data = self._patch_projectsettings_ini(raw_data, self.target_major, target_minor)
             data_modified = True
 
         # Patch embedded GLSL shaders for v10-and-below: inject compatibility stubs for
@@ -1045,22 +1049,16 @@ class SPPBuilder:
         fields = [
             ('.versionAtCreation/major', target_major),
             ('.versionAtCreation/minor', target_minor),
+            ('.versionAtCreation/patch', 0),
             ('.versionAtLastSave/major', target_major),
             ('.versionAtLastSave/minor', target_minor),
+            ('.versionAtLastSave/patch', 0),
         ]
         for field_name, target_value in fields:
-            offset = self._find_version_offset(data, field_name)
-            if offset >= 0 and offset < len(data):
-                data[offset] = target_value
+            offset = _version_value_offset(data, field_name)
+            if offset >= 0:
+                struct.pack_into('>I', data, offset, target_value)
         return bytes(data)
-
-    def _find_version_offset(self, data: bytes, field_name: str) -> int:
-        encoded = field_name.encode('utf-16-le')
-        idx = data.find(encoded)
-        if idx < 0:
-            return -1
-        value_offset = idx + len(encoded) + 2
-        return value_offset + 5
 
     def _get_downgrade_rules(self) -> Tuple[List[str], int]:
         # Prefer migration profile rules; use downgrade_config.yaml when no profile is loaded.
@@ -1082,6 +1080,10 @@ class SPPBuilder:
             mapped = self.V10_DATA_VERSION_MAP.get(dataset_path)
             if mapped is not None:
                 return mapped
+            for pattern, cap in self.V10_DATA_VERSION_MAP.items():
+                if '*' in pattern and fnmatch.fnmatchcase(dataset_path, pattern):
+                    source = (hbo_header or {}).get('data_version')
+                    return min(source, cap) if isinstance(source, int) else cap
         if hbo_header:
             data_version = hbo_header.get('data_version')
             if isinstance(data_version, int):

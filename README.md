@@ -54,6 +54,11 @@ The engine composes adjacent profiles automatically. For example, a request to
 build a 12.1 project for version 9 walks `12.1 -> 12 -> 11 -> 10 -> 9` and
 collapses those steps into one effective migration.
 
+Source revisions are detected from the saved project settings. Patch releases,
+including 12.1.5, automatically use their major/minor profile (12.1). The full
+revision is retained in the archive and shown in conversion warnings. New major
+formats still need a compatible migration profile.
+
 ## Install The Plugin
 
 Use this path if you want the menu inside Painter.

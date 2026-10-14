@@ -572,6 +572,17 @@ class TransformMixin:
             name, tcode, value = f[0], f[1], f[2]
             ovalue, otcode = value, tcode
             vt = runtime.FIELD_VALUE_TRANSFORM.get(f"{obj_name}.{name}")
+            if vt and vt.get('op') == 'channel_variant_to_legacy_bitmask' and value and value[0] == 'string':
+                map_type = self._get_field(fields4, 'mapIdType')
+                raw = value[1]
+                # Only channel references use enums; constants and named derived maps do not.
+                if (map_type and map_type[2][0] == 'primitive'
+                        and int.from_bytes(map_type[2][2], 'little') == 1
+                        and len(raw) == 9 and raw[:5] == b'\x00\x00\x00\x03\x00'):
+                    channel = int.from_bytes(raw[5:], 'big')
+                    channel = vt.get('channel_map', {}).get(str(channel), _legacy_channel_type(channel))
+                    mask = (1 << channel) if channel < 64 else 0
+                    value = ('string', b'\x00\x00\x00\x05\x00' + mask.to_bytes(8, 'big'))
             # Idempotent guard: only transform when the source is NOT already in the target
             # representation (value[1] != to_code). Prevents double-converting an already-
             # bitmask value (e.g. if a profile is mis-selected) into garbage.

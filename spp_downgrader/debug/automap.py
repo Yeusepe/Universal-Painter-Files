@@ -44,7 +44,20 @@ DEF_SCHEMA = os.path.join(ROOT, "spp_extractor", "lib")
 # --------------------------------------------------------------- version handling
 
 def parse_version(path):
-    """Read the full revision: v12.1.0 -> '12.1', v12.1.4 -> '12.1.4'."""
+    """Prefer the saved revision inside the project; fall back to a reference filename."""
+    import h5py
+    from spp_extractor import _parse_project_settings, _painter_version
+    try:
+        with h5py.File(path, 'r') as f:
+            version = (_painter_version(_parse_project_settings(bytes(f['projectsettings.ini'][()])))
+                       if 'projectsettings.ini' in f else None)
+    except OSError:
+        version = None
+    if version:
+        parts = [version.get(k, 0) for k in ('major', 'minor', 'patch')]
+        while len(parts) > 1 and parts[-1] == 0:
+            parts.pop()
+        return '.'.join(str(p) for p in parts)
     m = re.search(r"v?(\d+)(?:\.(\d+))?(?:\.(\d+))?", os.path.basename(path))
     if not m:
         return None
@@ -73,7 +86,7 @@ def corpus_references(corpus):
     not invent a 12.1.4 -> 12.1 downgrade that the converter never performs.
     """
     latest = {}
-    for path in sorted(glob.glob(os.path.join(corpus, "v*.spp"))):
+    for path in sorted(glob.glob(os.path.join(corpus, "*.spp"))):
         revision = parse_version(path)
         if revision is None:
             raise ValueError(f"Cannot read a version from corpus file: {path}")
@@ -326,7 +339,7 @@ def _commit(d, prof, action, value):
 
 def _todo_text(d, inferred):
     base = DS._describe(d)
-    return f"{base}  [inferred: {inferred[0]}={inferred[1] if inferred else '?'}]"
+    return f"{base}  [inferred: {inferred[0]}={inferred[1]}]" if inferred else f"{base}  [needs review]"
 
 
 def _prompt(d, inferred):
@@ -376,8 +389,12 @@ def write_outputs(prof, store, from_v, to_v, defaults, schema, args):
 
 
 def run_pair(src, tgt, args, today):
-    fv = profile_version(args.vfrom or parse_version(src))
-    tv = profile_version(args.vto or parse_version(tgt))
+    source_revision = args.vfrom or parse_version(src)
+    target_revision = args.vto or parse_version(tgt)
+    if source_revision is None or target_revision is None:
+        raise ValueError('Could not detect saved versions; supply --from and --to.')
+    fv = profile_version(source_revision)
+    tv = profile_version(target_revision)
     if vkey(fv) <= vkey(tv):
         raise ValueError(
             "Mapping requires a newer major/minor source format. Patch releases "

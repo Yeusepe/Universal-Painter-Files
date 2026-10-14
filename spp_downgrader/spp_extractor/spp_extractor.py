@@ -126,20 +126,9 @@ class SPPExtractor:
                     version_info = _parse_project_settings(settings_data)
                     if version_info:
                         metadata['version_info'] = version_info
-                        # Use 'is not None' (not 'or'): a legit minor of 0 must NOT fall
-                        # back to versionAtCreation -- that mislabels e.g. v12.0 as v12.1
-                        # and applies the wrong version's transforms.
-                        major = version_info.get('.versionAtLastSave/major')
-                        if major is None:
-                            major = version_info.get('.versionAtCreation/major')
-                        minor = version_info.get('.versionAtLastSave/minor')
-                        if minor is None:
-                            minor = version_info.get('.versionAtCreation/minor')
-                        if major is not None:
-                            metadata['painter_version'] = {
-                                'major': int(major),
-                                'minor': int(minor) if minor is not None else 0
-                            }
+                        version = _painter_version(version_info)
+                        if version:
+                            metadata['painter_version'] = version
                 except Exception:
                     pass
 
@@ -665,19 +654,38 @@ def _parse_project_settings(data: bytes) -> Dict[str, Any]:
     fields = [
         '.versionAtCreation/major',
         '.versionAtCreation/minor',
+        '.versionAtCreation/patch',
         '.versionAtLastSave/major',
         '.versionAtLastSave/minor',
+        '.versionAtLastSave/patch',
     ]
 
     for field_name in fields:
-        encoded = field_name.encode('utf-16-le')
-        idx = data.find(encoded)
-        if idx >= 0:
-            value_offset = idx + len(encoded) + 2 + 5
-            if value_offset < len(data):
-                result[field_name] = data[value_offset]
+        offset = _version_value_offset(data, field_name)
+        if offset >= 0:
+            result[field_name] = struct.unpack_from('>I', data, offset)[0]
 
     return result
+
+
+def _version_value_offset(data, field_name):
+    # QDataStream stores a UTF-16BE key followed by a QVariant int and null flag.
+    encoded = field_name.lstrip('.').encode('utf-16-be')
+    record = struct.pack('>I', len(encoded)) + encoded + b'\x00\x00\x00\x02\x00'
+    idx = data.find(record)
+    offset = idx + len(record)
+    return offset if idx >= 0 and offset + 4 <= len(data) else -1
+
+
+def _painter_version(settings):
+    """Use the last-save revision as a unit; creation is only a legacy fallback."""
+    for prefix in ('.versionAtLastSave/', '.versionAtCreation/'):
+        if settings.get(prefix + 'major') is not None:
+            version = {key: int(settings[prefix + key])
+                       for key in ('major', 'minor', 'patch') if prefix + key in settings}
+            version.setdefault('minor', 0)
+            return version
+    return None
 
 
 # ============================================================================

@@ -77,6 +77,20 @@ def created_version_of(manifest, meta):
     return None
 
 
+def source_revision_of(manifest, meta):
+    """Keep the saved patch for display while profiles use major/minor boundaries."""
+    version = created_version_of(manifest, meta)
+    if version is None:
+        return None
+    label = ver_label(*version)
+    for info in (manifest.get('created_version'), meta.get('painter_version')):
+        if not info or info.get('patch') is None:
+            continue
+        if created_version_of({}, {'painter_version': info}) == version:
+            return f"{version[0]}.{version[1]}.{int(info['patch'])}"
+    return label
+
+
 # --------------------------------------------------------- profile graph helpers
 
 def _edges():
@@ -88,6 +102,7 @@ def _edges():
 def compute_supported_versions(created_label):
     """created version + every label reachable downward through adjacent steps."""
     from lib import migration_profile as mp
+    created_label = ver_label(*parse_ver(created_label))
     edges = _edges()
     start = mp._snap_source(created_label, edges)
     seen = {created_label, start}
@@ -103,6 +118,7 @@ def compute_supported_versions(created_label):
 
 def resolve_direction(s_label, t_label):
     """-> (direction, supported)."""
+    s_label, t_label = (ver_label(*parse_ver(v)) for v in (s_label, t_label))
     sk, tk = _vkey(s_label), _vkey(t_label)
     if tk == sk:
         return "exact", True
@@ -173,22 +189,16 @@ def _raster_requests_from_uspp(uspp_path, s_label, t_label):
 
 def _read_native_version_and_hbo(spp_path):
     import h5py
-    from spp_extractor import _parse_project_settings
+    from spp_extractor import _parse_project_settings, _painter_version
     version = None
     items = []
     with h5py.File(spp_path, "r") as f:
         if "projectsettings.ini" in f:
             try:
                 settings = bytes(f["projectsettings.ini"][()])
-                parsed = _parse_project_settings(settings) or {}
-                major = parsed.get(".versionAtLastSave/major")
-                if major is None:
-                    major = parsed.get(".versionAtCreation/major")
-                minor = parsed.get(".versionAtLastSave/minor")
-                if minor is None:
-                    minor = parsed.get(".versionAtCreation/minor")
-                if major is not None:
-                    version = ver_label(int(major), int(minor or 0))
+                parsed = _painter_version(_parse_project_settings(settings))
+                if parsed:
+                    version = ver_label(parsed['major'], parsed['minor'])
             except Exception:
                 pass
 
@@ -223,7 +233,7 @@ def cmd_pack(args):
     extraction = ex.extract(decode_hbo=False, skip_texture_cache=True)
     emit_progress(0.10, "Compressing project…")
     cv = extraction.metadata.get("painter_version") or {}
-    created = {"major": int(cv.get("major")), "minor": int(cv.get("minor") or 0)} if cv.get("major") is not None else None
+    created = dict(cv) if cv.get("major") is not None else None
     extra = {
         "format_version": FORMAT_VERSION,
         "tool_version": TOOL_VERSION,
@@ -232,6 +242,7 @@ def cmd_pack(args):
     }
     if created:
         extra["supported_versions"] = compute_supported_versions(ver_label(created["major"], created["minor"]))
+        print(f"Detected Painter v{source_revision_of(extra, extraction.metadata)}")
     ex.save_as_uspp(
         extraction,
         args.output,
@@ -291,6 +302,7 @@ def cmd_info(args):
     cv = created_version_of(manifest, meta)
     print(json.dumps({
         "created_version": ver_label(*cv) if cv else None,
+        "source_revision": source_revision_of(manifest, meta),
         "supported_versions": manifest.get("supported_versions"),
         "format_version": manifest.get("format_version"),
         "tool_version": manifest.get("tool_version"),
@@ -327,6 +339,7 @@ def cmd_plan(args):
         "lossy": bool(lost) or bool(raster_requests),
         "lost_features": lost,
         "source_version": s_label,
+        "source_revision": source_revision_of(manifest, meta),
         "target_version": t_label,
         "tool_version": TOOL_VERSION,
     }

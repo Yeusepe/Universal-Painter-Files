@@ -489,7 +489,7 @@ def _open_path(src):
 
             if not plan.get("supported"):
                 dialogs.error(
-                    f"This project was created in v{plan.get('source_version')} and cannot be "
+                    f"This project was saved in v{plan.get('source_revision') or plan.get('source_version')} and cannot be "
                     f"converted to your version (v{plan.get('target_version')})."
                 )
                 return
@@ -498,7 +498,7 @@ def _open_path(src):
                     return
             elif plan.get("direction") == "native_upgrade":
                 dialogs.info(
-                    f"This project was created in v{plan['source_version']}. "
+                    f"This project was saved in v{plan.get('source_revision') or plan['source_version']}. "
                     "Substance Painter will upgrade it to your version on open."
                 )
 

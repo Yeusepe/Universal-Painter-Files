@@ -82,7 +82,15 @@ process.
 | `build --uspp <file.uspp> --target <version> -o <out.spp>` | Rebuilds a native `.spp` for the target version or for the stored version when the target can upgrade natively. |
 | `convert <in.spp> --target <version> -o <out.spp>` | One-shot `.spp` -> `.spp`: packs to a temporary `.uspp`, then builds the target. Supports `--keep-uspp`, `--raster-capture-dir`, and `--raster-budget-mb`. |
 
-Version labels can be major-only or major-minor, such as `10`, `12`, or `12.1`.
+Version labels can include a patch, such as `10`, `12.1`, or `12.1.5`.
+The source revision is detected from the last-save fields inside the project,
+regardless of its filename or the version that originally created it. `info` and
+`plan` report the full saved revision as `source_revision`.
+
+Patch releases use the existing major/minor profiles: a 12.1.5 project automatically
+uses `12.1 -> 12 -> 11 -> 10 -> 9 -> 8.1`. A target of `12.1.0` therefore uses the
+12.1 format without a patch-only downgrade. Unknown major versions still require
+a new profile; detecting a revision does not prove an unknown format is compatible.
 
 ## How Versions Are Resolved
 
@@ -179,7 +187,8 @@ the HBO object streams inside some datasets.
 ### Container And Dataset Level
 
 - **Version stamps:** `projectsettings.ini` is patched so the target version sees
-  the file as one of its own.
+  the file as one of its own. Both creation and last-save revisions use the
+  selected profile boundary, with patch zero (for example, 8.1.0 for an 8.3 target).
 - **Unsupported project settings:** v10-and-older builds strip v11-only records
   such as `projectUUID`, which older `ProjectManagement` code does not expect.
 - **Dataset renames:** profile data maps dataset names that changed between
@@ -189,6 +198,9 @@ the HBO object streams inside some datasets.
   For v10, `paint/document.bin` and `paint/default_material.bin` must use data
   version `81`; lower values can make Painter run update handlers on data that
   has already been projected to v10.
+- **Export presets:** 12.1 channel references in embedded `.spexp` presets are
+  converted to legacy channel masks, and their data version is capped at 4.
+  Binary values are preserved without treating them as UTF-8 text.
 - **Checksums:** changed datasets get fresh `m3_x64_128` attributes. The seed is
   `0xF13A0239`, matching Painter's MurmurHash3 x64 128 checksum.
 - **Texture cache:** `texture-cache/*` is stripped because it belongs to the
@@ -269,7 +281,7 @@ Common profile keys:
 | `defaults_file` | Target default values used when a required member is missing from the source. |
 | `baking_schema_file` | Target baker ID to ordered tweak list. |
 | `target_max_data_version` | Fallback cap for HBO data versions. |
-| `data_version_map` | Per-dataset HBO data version values for the target. |
+| `data_version_map` | Per-dataset HBO data version values; wildcard entries cap resource versions. |
 | `dataset_renames` | Dataset path renames between source and target. |
 | `blacklist` | Types or fields the target rejects and the converter must remove. |
 | `type_rename` | Object type renames where the data still means the same thing. |
@@ -303,6 +315,10 @@ python spp_downgrader\debug\automap.py --corpus path\to\Old_to_new --non-interac
 `automap.py` decodes both object trees and derives as much profile data as it
 can: type renames, field renames, dropped types, schema, dataset renames, version
 stamps, baking ID renames, and baking tweak renames.
+
+It detects revisions from each file's saved settings, including patch numbers;
+corpus files can have arbitrary names. Versioned filenames remain a fallback when
+settings are unavailable. The newest patch in each major/minor family is selected.
 
 When it cannot infer something confidently, interactive mode asks once and saves
 the answer under `profiles/decisions/`. Non-interactive mode writes a best guess

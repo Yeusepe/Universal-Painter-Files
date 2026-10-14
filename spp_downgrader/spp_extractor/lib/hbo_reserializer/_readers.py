@@ -95,8 +95,12 @@ class ReaderMixin:
             return ("array", ("object", values))
 
         if type_code == 0x10:
-            s = self._read_string(src)
-            return ("string", s.encode('utf-8'))
+            # String values can hold binary QVariants (export map IDs), not just UTF-8.
+            length = self._read_u32(src)
+            raw = src.read(length)
+            if len(raw) != length:
+                raise ValueError("Unexpected EOF while reading string value")
+            return ("string", raw)
         if type_code == 0x0A:
             return ("primitive", 0x0A, bytes([self._read_u8(src)]))
         if type_code == 0x09:

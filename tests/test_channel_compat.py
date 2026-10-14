@@ -1,3 +1,4 @@
+import io
 import struct
 import sys
 from pathlib import Path
@@ -8,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "spp_downgrader" / "spp_extractor"))
 
 from lib.hbo_reserializer import HBOSerializer, runtime  # noqa: E402
+from lib.migration_profile import load  # noqa: E402
 
 
 def serializer():
@@ -78,6 +80,48 @@ class ChannelCompatibilityTests(unittest.TestCase):
 
         self.assertEqual(out[0][1], 12)
         self.assertEqual(int.from_bytes(out[0][2][2], "little"), (1 << 7) | (1 << 15))
+
+    def test_solo_channel_uses_enum_semantics_in_composed_1215_downgrade(self):
+        profile = load('v12.1_to_v11')
+        runtime.FIELD_VALUE_TRANSFORM = profile.field_value_transform
+        runtime.FIELD_RETYPE = profile.field_retype
+        for source, expected in [(0, 1), (7, 1 << 7), (69, 1 << 19), (0xFFFFFFFF, 0)]:
+            with self.subTest(source=source):
+                fields = [('channelType', 9, primitive(9, source, 4), False)]
+                output = serializer()._apply_field_xforms('SettingsSolo', fields)
+                self.assertEqual(output[0][1], 12)
+                self.assertEqual(int.from_bytes(output[0][2][2], 'little'), expected)
+                self.assertEqual(serializer()._apply_field_xforms('SettingsSolo', output), output)
+
+    def test_export_channel_variants_use_legacy_masks(self):
+        runtime.FIELD_VALUE_TRANSFORM = load('v12.1_to_v10').field_value_transform
+        for source, expected in [(0, 1), (13, 1 << 13), (64, 1 << 14),
+                                 (65, 1 << 15), (74, 1 << 34), (77, 1 << 37)]:
+            with self.subTest(source=source):
+                raw = b'\x00\x00\x00\x03\x00' + source.to_bytes(4, 'big')
+                fields = [('mapId', 16, ('string', raw), False),
+                          ('mapIdType', 9, primitive(9, 1, 4), False)]
+                output = serializer()._apply_field_xforms('DataExportChannel', fields)
+                self.assertEqual(output[0][2][1], b'\x00\x00\x00\x05\x00' + expected.to_bytes(8, 'big'))
+                self.assertEqual(serializer()._apply_field_xforms('DataExportChannel', output), output)
+
+    def test_export_constants_named_maps_and_legacy_variants_stay_unchanged(self):
+        runtime.FIELD_VALUE_TRANSFORM = load('v12.1_to_v12').field_value_transform
+        for map_type, raw in [(0, b'\x00\x00\x00\x03\x00' + bytes(4)),
+                              (2, b'\x00\x00\x00\x0a\x00Normal_OpenGL'),
+                              (1, b'\x00\x00\x00\x05\x00' + (1 << 15).to_bytes(8, 'big'))]:
+            fields = [('mapId', 16, ('string', raw), False),
+                      ('mapIdType', 9, primitive(9, map_type, 4), False)]
+            self.assertEqual(serializer()._apply_field_xforms('DataExportChannel', fields), fields)
+
+    def test_binary_string_values_roundtrip_without_utf8_replacement(self):
+        raw = b'\x00\x00\x00\x05\x00' + (1 << 15).to_bytes(8, 'big')
+        stream = io.BytesIO()
+        serializer()._write_reg_value(stream, 16, ('string', raw), {}, 0)
+        stream.seek(0)
+        self.assertEqual(serializer()._parse_v11_value(stream, 16, [], []), ('string', raw))
+        with self.assertRaisesRegex(ValueError, 'Unexpected EOF'):
+            serializer()._parse_v11_value(io.BytesIO(struct.pack('<I', 10) + b'x'), 16, [], [])
 
 
 if __name__ == "__main__":
