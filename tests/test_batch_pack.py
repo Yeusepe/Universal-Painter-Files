@@ -45,7 +45,7 @@ class BatchPackTests(unittest.TestCase):
 
     def run_batch(self, *inputs, **kwargs):
         args = argparse.Namespace(inputs=list(map(str, inputs)), recursive=False,
-                                  output_dir=None, overwrite=False, verbose=False)
+                                  output_dir=None, overwrite=False, delete_source=False, verbose=False)
         for name, value in kwargs.items():
             setattr(args, name, value)
         stdout, stderr = io.StringIO(), io.StringIO()
@@ -99,26 +99,26 @@ class BatchPackTests(unittest.TestCase):
     def test_existing_output_reports_failure_but_later_file_succeeds(self):
         first, second = self.project('first.spp'), self.project('second.spp')
         first.with_suffix('.uspp').write_bytes(b'previous archive')
-        rc, stdout, stderr = self.run_batch(first, second)
+        rc, stdout, stderr = self.run_batch(first, second, delete_source=True)
         self.assertEqual(rc, 1)
         self.assertIn('1 succeeded, 1 failed', stdout)
         self.assertIn('output exists', stderr)
         self.assertTrue(first.exists())
         self.assertEqual(first.with_suffix('.uspp').read_bytes(), b'previous archive')
-        self.assertTrue(second.exists())
+        self.assertFalse(second.exists())
         self.assertTrue(second.with_suffix('.uspp').exists())
 
     def test_corrupt_project_reports_failure_but_later_file_succeeds(self):
         bad = self.root / 'bad.spp'
         bad.write_bytes(b'not an HDF5 file')
         good = self.project('good.spp')
-        rc, stdout, stderr = self.run_batch(bad, good)
+        rc, stdout, stderr = self.run_batch(bad, good, delete_source=True)
         self.assertEqual(rc, 1)
         self.assertIn('1 succeeded, 1 failed', stdout)
         self.assertIn(str(bad), stderr)
         self.assertTrue(bad.exists())
         self.assertFalse(bad.with_suffix('.uspp').exists())
-        self.assertTrue(good.exists())
+        self.assertFalse(good.exists())
         self.assert_no_temporaries()
 
     def test_missing_and_wrong_extension_inputs_do_not_stop_batch(self):
@@ -137,7 +137,7 @@ class BatchPackTests(unittest.TestCase):
         good = self.project('c/good.spp')
         output = self.root / 'out'
         rc, stdout, stderr = self.run_batch(first.parent, second.parent, good,
-                                           output_dir=str(output))
+                                           output_dir=str(output), delete_source=True)
         self.assertEqual(rc, 1)
         self.assertIn('1 succeeded, 2 failed', stdout)
         self.assertEqual(stderr.count('multiple sources map'), 2)
@@ -159,7 +159,7 @@ class BatchPackTests(unittest.TestCase):
         source.write_bytes(b'bad')
         output = source.with_suffix('.uspp')
         output.write_bytes(b'previous archive')
-        self.assertEqual(self.run_batch(source, overwrite=True)[0], 1)
+        self.assertEqual(self.run_batch(source, overwrite=True, delete_source=True)[0], 1)
         self.assertEqual(output.read_bytes(), b'previous archive')
         self.assertTrue(source.exists())
         self.assert_no_temporaries()
@@ -175,7 +175,7 @@ class BatchPackTests(unittest.TestCase):
             return result
 
         with mock.patch.object(SPPExtractor, 'extract', failed_extract):
-            rc, _, stderr = self.run_batch(source)
+            rc, _, stderr = self.run_batch(source, delete_source=True)
         self.assertEqual(rc, 1)
         self.assertIn('project extraction failed', stderr)
         self.assertTrue(source.exists())
@@ -188,16 +188,78 @@ class BatchPackTests(unittest.TestCase):
             project.create_dataset('a_b/c', data=np.array([1], dtype='u1'))
             project.create_dataset('a/b_c', data=np.array([2], dtype='u1'))
         with self.assertWarns(UserWarning):
-            rc, _, stderr = self.run_batch(source)
+            rc, _, stderr = self.run_batch(source, delete_source=True)
         self.assertEqual(rc, 1)
         self.assertIn('duplicate entries', stderr)
         self.assertTrue(source.exists())
         self.assertFalse(source.with_suffix('.uspp').exists())
         self.assert_no_temporaries()
 
+    def test_delete_source_only_after_readable_archive_published(self):
+        source = self.project('project.spp')
+        output = source.with_suffix('.uspp')
+        unlink = Path.unlink
 
+        def observe_unlink(path, *args, **kwargs):
+            if path == source:
+                with zipfile.ZipFile(output) as archive:
+                    self.assertIsNone(archive.testzip())
+            return unlink(path, *args, **kwargs)
 
+        with mock.patch.object(Path, 'unlink', observe_unlink):
+            rc, stdout, _ = self.run_batch(source, delete_source=True)
+        self.assertEqual(rc, 0)
+        self.assertIn('source deleted', stdout)
+        self.assertFalse(source.exists())
+        self.assert_no_temporaries()
 
+    def test_integrity_failure_keeps_source_and_previous_output(self):
+        source = self.project('project.spp')
+        output = source.with_suffix('.uspp')
+        output.write_bytes(b'previous archive')
+        with mock.patch.object(zipfile.ZipFile, 'testzip', return_value='data/bad.bin'):
+            rc, _, stderr = self.run_batch(source, overwrite=True, delete_source=True)
+        self.assertEqual(rc, 1)
+        self.assertIn('integrity check failed', stderr)
+        self.assertTrue(source.exists())
+        self.assertEqual(output.read_bytes(), b'previous archive')
+        self.assert_no_temporaries()
+
+    def test_changed_source_is_not_deleted(self):
+        source = self.project('project.spp')
+        pack = uspp_tool.cmd_pack
+
+        def pack_then_change(args):
+            rc = pack(args)
+            with source.open('ab') as stream:
+                stream.write(b'changed after packing')
+            return rc
+
+        with mock.patch.object(uspp_tool, 'cmd_pack', side_effect=pack_then_change):
+            rc, _, stderr = self.run_batch(source, delete_source=True)
+        self.assertEqual(rc, 1)
+        self.assertIn('source changed', stderr)
+        self.assertTrue(source.exists())
+        self.assertFalse(source.with_suffix('.uspp').exists())
+
+    def test_delete_failure_reports_saved_archive_and_continues(self):
+        first, second = self.project('first.spp'), self.project('second.spp')
+        unlink = Path.unlink
+
+        def deny_source(path, *args, **kwargs):
+            if path == first:
+                raise PermissionError('source is locked')
+            return unlink(path, *args, **kwargs)
+
+        with mock.patch.object(Path, 'unlink', deny_source):
+            rc, stdout, stderr = self.run_batch(first, second, delete_source=True)
+        self.assertEqual(rc, 1)
+        self.assertIn('archive saved', stderr)
+        self.assertIn('1 succeeded, 1 failed', stdout)
+        self.assertTrue(first.exists())
+        self.assertTrue(first.with_suffix('.uspp').exists())
+        self.assertFalse(second.exists())
+        self.assert_no_temporaries()
 
     def test_cancel_removes_partial_archive_and_keeps_source(self):
         source = self.project('project.spp')
@@ -207,7 +269,7 @@ class BatchPackTests(unittest.TestCase):
             raise KeyboardInterrupt
 
         with mock.patch.object(uspp_tool, 'cmd_pack', side_effect=interrupted):
-            rc, _, _ = self.run_batch(source)
+            rc, _, _ = self.run_batch(source, delete_source=True)
         self.assertEqual(rc, 130)
         self.assertTrue(source.exists())
         self.assertFalse(source.with_suffix('.uspp').exists())
@@ -220,11 +282,11 @@ class BatchPackTests(unittest.TestCase):
         output.mkdir()
         (output / 'blocked').write_bytes(b'not a folder')
         rc, stdout, _ = self.run_batch(first.parents[1], recursive=True,
-                                      output_dir=str(output))
+                                      output_dir=str(output), delete_source=True)
         self.assertEqual(rc, 1)
         self.assertIn('1 succeeded, 1 failed', stdout)
         self.assertTrue(first.exists())
-        self.assertTrue(second.exists())
+        self.assertFalse(second.exists())
         self.assertTrue((output / 'second.uspp').exists())
 
     def test_output_created_during_pack_is_not_overwritten(self):
@@ -238,7 +300,7 @@ class BatchPackTests(unittest.TestCase):
             return rc
 
         with mock.patch.object(uspp_tool, 'cmd_pack', side_effect=racing_pack):
-            self.assertEqual(self.run_batch(source)[0], 1)
+            self.assertEqual(self.run_batch(source, delete_source=True)[0], 1)
         self.assertEqual(output.read_bytes(), b'created by another process')
         self.assertTrue(source.exists())
         self.assert_no_temporaries()
@@ -261,24 +323,35 @@ class BatchPackTests(unittest.TestCase):
             output.symlink_to(source)
         except OSError as error:
             self.skipTest(f'file symlinks unavailable: {error}')
-        rc, _, stderr = self.run_batch(source, overwrite=True)
+        rc, _, stderr = self.run_batch(source, overwrite=True, delete_source=True)
         self.assertEqual(rc, 1)
         self.assertIn('output points to a source project', stderr)
         self.assertEqual(source.read_bytes(), before)
 
+    def test_source_file_link_is_removed_without_deleting_its_target(self):
+        source = self.project('project.spp')
+        link = self.root / 'link.spp'
+        try:
+            link.symlink_to(source)
+        except OSError as error:
+            self.skipTest(f'file symlinks unavailable: {error}')
+        self.assertEqual(self.run_batch(link, delete_source=True)[0], 0)
+        self.assertFalse(link.exists())
+        self.assertTrue(source.exists())
+        self.assertTrue(link.with_suffix('.uspp').exists())
 
     def test_real_cli_continues_after_error_from_other_working_directory(self):
         source = self.project('project with spaces.spp')
         result = subprocess.run(
             [sys.executable, str(ROOT / 'spp_downgrader/uspp_tool.py'), 'batch-pack',
-             str(self.root / 'missing.spp'), str(source)],
+             str(self.root / 'missing.spp'), str(source), '--delete-source'],
             cwd=self.root, capture_output=True, text=True, encoding='utf-8',
             env={**os.environ, 'PYTHONIOENCODING': 'utf-8'},
         )
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn('1 succeeded, 1 failed', result.stdout)
         self.assertTrue(source.with_suffix('.uspp').exists())
-        self.assertTrue(source.exists())
+        self.assertFalse(source.exists())
 
     def test_real_cli_reports_unicode_paths_with_redirected_output(self):
         first = self.project('日本語.SPP')

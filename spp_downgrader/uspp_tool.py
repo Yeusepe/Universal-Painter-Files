@@ -276,14 +276,18 @@ def _batch_inputs(args):
     return list(jobs.values()), errors
 
 
+def _source_identity(source):
+    info = source.stat()
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
 
 
 def _batch_pack_one(source, destination, args):
-    """Publish complete archives without changing source projects."""
+    """Publish complete archives, then optionally remove the unchanged source."""
     temporary = None
     try:
         if not args.overwrite and os.path.lexists(destination):
             raise FileExistsError(f'output exists: {destination}. Use --overwrite to replace it')
+        identity = _source_identity(source) if args.delete_source else None
         destination.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
             dir=destination.parent, prefix=f'.{destination.name}.', suffix='.tmp', delete=False,
@@ -302,6 +306,15 @@ def _batch_pack_one(source, destination, args):
             names = archive.namelist()
             if len(names) != len(set(names)):
                 raise RuntimeError('archive contains duplicate entries; source was kept')
+        if args.delete_source:
+            with zipfile.ZipFile(temporary) as archive:
+                bad_member = archive.testzip()
+                if bad_member:
+                    raise RuntimeError(f'archive integrity check failed: {bad_member}')
+            if _source_identity(source) != identity:
+                raise RuntimeError('source changed during conversion; source was kept')
+            with temporary.open('r+b') as archive_file:
+                os.fsync(archive_file.fileno())
         if args.overwrite:
             os.replace(temporary, destination)
         elif os.name == 'nt':
@@ -312,6 +325,13 @@ def _batch_pack_one(source, destination, args):
             # link() cannot overwrite a file created after our existence check.
             # The temporary is beside the output, so both paths are on the same volume.
             os.link(temporary, destination)
+        if args.delete_source:
+            try:
+                if _source_identity(source) != identity:
+                    raise RuntimeError('source changed during conversion')
+                source.unlink()
+            except (OSError, RuntimeError) as error:
+                raise RuntimeError(f'archive saved to {destination}, but source was not deleted: {error}') from error
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
@@ -361,7 +381,7 @@ def cmd_batch_pack(args):
                     raise ValueError(invalid[source])
                 _batch_pack_one(source, destination, args)
                 succeeded += 1
-                print(f'OK -> {destination}', flush=True)
+                print(f'OK -> {destination}' + (' (source deleted)' if args.delete_source else ''), flush=True)
             except Exception as error:
                 report(source, error)
                 if args.verbose:
@@ -630,6 +650,7 @@ def main():
     p.add_argument('-r', '--recursive', action='store_true', help='Include subfolders without following directory links')
     p.add_argument('-o', '--output-dir', help='Write beneath this folder instead of beside each source')
     p.add_argument('--overwrite', action='store_true', help='Replace existing outputs only after packing succeeds')
+    p.add_argument('--delete-source', action='store_true', help='Delete each source .spp only after its archive passes integrity checks')
     p.add_argument('-v', '--verbose', action='store_true', default=argparse.SUPPRESS, help='Show packer details and tracebacks')
     p.set_defaults(fn=cmd_batch_pack)
     p = sub.add_parser("raster-plan"); p.add_argument("input"); p.add_argument("--targets", default="all-lower"); p.add_argument("-o", "--output"); p.set_defaults(fn=cmd_raster_plan)
