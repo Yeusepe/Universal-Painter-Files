@@ -409,16 +409,16 @@ class SPPExtractor:
 
     def save_as_uspp(self, extraction: SPPExtraction, output_path: str,
                      extra_manifest: dict = None, raster_capture_dir: str = None,
-                     raster_budget_bytes: int = None):
-        """Save extraction result as a USPP (ZIP) archive. extra_manifest merges extra
+                     raster_budget_bytes: int = None, compression=None):
+        """Save project members using ZIP by default, or the requested compression.
+        extra_manifest merges extra
         top-level fields into manifest.json (e.g. created_version, supported_versions)."""
         output_path = Path(output_path)
 
         print(f"Saving to: {output_path}")
 
-        # Level 1: the payload is mostly already-compressed binary, so level-6 deflate
-        # burns CPU for little gain. Level 1 is several times faster at near-identical size.
-        with zipfile.ZipFile(str(output_path), 'w', zipfile.ZIP_DEFLATED, compresslevel=1) as zf:
+        from lib.project_archive import ArchiveWriter
+        with ArchiveWriter(output_path, compression) as zf:
             # Write metadata
             manifest = {
                 'version': '1.0',
@@ -430,13 +430,14 @@ class SPPExtractor:
             }
             if extra_manifest:
                 manifest.update(extra_manifest)
+            manifest['compression'] = zf.settings.metadata()
             zf.writestr('manifest.json', json.dumps(manifest, indent=2))
+
+            # Keep these first so metadata-only 7z reads stop before bulk payloads.
+            zf.writestr('metadata.json', json.dumps(extraction.metadata, indent=2))
 
             # Write HDF5 structure
             zf.writestr('structure.json', json.dumps(extraction.hdf5_structure, indent=2))
-
-            # Write metadata
-            zf.writestr('metadata.json', json.dumps(extraction.metadata, indent=2))
 
             # Write group info
             groups_info = {path: {

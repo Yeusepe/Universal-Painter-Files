@@ -31,6 +31,8 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, "spp_extractor"))
 sys.path.insert(0, os.path.join(_HERE, "spp_builder"))
 
+from lib.project_archive import open_archive, verify_project_archive
+
 # When frozen by PyInstaller, point the engine at the bundled profiles dir.
 if getattr(sys, "frozen", False):
     os.environ.setdefault("SPP_PROFILE_DIR", os.path.join(sys._MEIPASS, "profiles"))
@@ -56,7 +58,7 @@ def _vkey(label):
 # ---------------------------------------------------------------------- manifest
 
 def load_manifest(uspp_path):
-    with zipfile.ZipFile(uspp_path) as z:
+    with open_archive(uspp_path, members=('manifest.json', 'metadata.json')) as z:
         manifest = json.loads(z.read("manifest.json"))
         try:
             meta = json.loads(z.read("metadata.json"))
@@ -66,7 +68,7 @@ def load_manifest(uspp_path):
 
 
 def load_raster_manifest(uspp_path):
-    with zipfile.ZipFile(uspp_path) as z:
+    with open_archive(uspp_path) as z:
         from lib.raster_manifest import load_from_zip
         return load_from_zip(z)
 
@@ -171,7 +173,7 @@ def _hbo_raster_requests(raw, dataset_path, s_label, t_label):
 
 def _raster_requests_from_uspp(uspp_path, s_label, t_label):
     out = []
-    with zipfile.ZipFile(uspp_path) as z:
+    with open_archive(uspp_path) as z:
         try:
             datasets = json.loads(z.read("datasets.json").decode("utf-8"))
         except Exception:
@@ -303,18 +305,9 @@ def _batch_pack_one(source, destination, args):
                 rc = cmd_pack(pack_args)
         if rc:
             raise RuntimeError(f'packer returned exit code {rc}')
-        manifest, _ = load_manifest(temporary)
-        if manifest.get('errors'):
-            raise RuntimeError('project extraction failed: ' + '; '.join(map(str, manifest['errors'])))
-        with zipfile.ZipFile(temporary) as archive:
-            names = archive.namelist()
-            if len(names) != len(set(names)):
-                raise RuntimeError('archive contains duplicate entries; source was kept')
+        with open_archive(temporary) as archive:
+            verify_project_archive(archive, full=args.delete_source)
         if args.delete_source:
-            with zipfile.ZipFile(temporary) as archive:
-                bad_member = archive.testzip()
-                if bad_member:
-                    raise RuntimeError(f'archive integrity check failed: {bad_member}')
             if _source_identity(source) != identity:
                 raise RuntimeError('source changed during conversion; source was kept')
             with temporary.open('r+b') as archive_file:
@@ -441,6 +434,7 @@ def cmd_pack(args):
             int(args.raster_budget_mb) * 1024 * 1024
             if getattr(args, "raster_budget_mb", None) is not None else None
         ),
+        compression=getattr(args, 'compression_settings', None),
     )
     print(f"packed -> {args.output}")
     return 0
@@ -487,7 +481,10 @@ def cmd_convert(args):
 
 
 def cmd_info(args):
-    manifest, meta = load_manifest(args.uspp)
+    with open_archive(args.uspp, members=('manifest.json', 'metadata.json')) as archive:
+        manifest, meta = load_manifest(archive)
+        compression = archive.compression_info()
+    compression['configuration'] = manifest.get('compression')
     cv = created_version_of(manifest, meta)
     print(json.dumps({
         "created_version": ver_label(*cv) if cv else None,
@@ -496,12 +493,18 @@ def cmd_info(args):
         "format_version": manifest.get("format_version"),
         "tool_version": manifest.get("tool_version"),
         "source_file": manifest.get("source_file"),
+        "compression": compression,
     }, indent=2))
     return 0
 
 
 def cmd_plan(args):
-    manifest, meta = load_manifest(args.uspp)
+    with open_archive(args.uspp) as archive:
+        return _plan_from_archive(args, archive)
+
+
+def _plan_from_archive(args, archive):
+    manifest, meta = load_manifest(archive)
     cv = created_version_of(manifest, meta)
     if not cv:
         print(json.dumps({"error": "no created_version in .uspp"}))
@@ -519,8 +522,8 @@ def cmd_plan(args):
         from lib.raster_manifest import summarize
         profile = mp.load(f"v{s_label}_to_v{t_label}")
         lost = build_lossiness_report(profile)
-        raster_requests = _raster_requests_from_uspp(args.uspp, s_label, t_label)
-        raster_summary = summarize(load_raster_manifest(args.uspp), raster_requests)
+        raster_requests = _raster_requests_from_uspp(archive, s_label, t_label)
+        raster_summary = summarize(load_raster_manifest(archive), raster_requests)
 
     result = {
         "direction": direction,
@@ -601,7 +604,12 @@ def cmd_raster_plan(args):
 
 
 def cmd_build(args):
-    manifest, meta = load_manifest(args.uspp)
+    with open_archive(args.uspp) as archive:
+        return _build_from_archive(args, archive)
+
+
+def _build_from_archive(args, archive):
+    manifest, meta = load_manifest(archive)
     cv = created_version_of(manifest, meta)
     if not cv:
         print("error: no created_version in .uspp", file=sys.stderr)
@@ -624,7 +632,7 @@ def cmd_build(args):
         # target, incl. minor), not the snapped format boundary.
         os.environ["SPP_TARGET_VERSION"] = t_label
         build_spp = _import_builder()
-        ok = build_spp(args.uspp, args.output, verbose=args.verbose, target_major=t_major)
+        ok = build_spp(args.uspp, args.output, verbose=args.verbose, target_major=t_major, archive=archive)
     else:
         # Exact / native-upgrade builds copy compatible streams as-is. Painter upgrades
         # on open if needed; do not infer the source major as a downgrade target.
@@ -636,6 +644,7 @@ def cmd_build(args):
             verbose=args.verbose,
             target_major=None,
             preserve_source=True,
+            archive=archive,
         )
 
     if ok:

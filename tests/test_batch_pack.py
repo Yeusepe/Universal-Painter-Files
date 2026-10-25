@@ -268,8 +268,7 @@ class BatchPackTests(unittest.TestCase):
         with h5py.File(source, 'a') as project:
             project.create_dataset('a_b/c', data=np.array([1], dtype='u1'))
             project.create_dataset('a/b_c', data=np.array([2], dtype='u1'))
-        with self.assertWarns(UserWarning):
-            rc, _, stderr = self.run_batch(source, delete_source=True)
+        rc, _, stderr = self.run_batch(source, delete_source=True)
         self.assertEqual(rc, 1)
         self.assertIn('duplicate entries', stderr)
         self.assertTrue(source.exists())
