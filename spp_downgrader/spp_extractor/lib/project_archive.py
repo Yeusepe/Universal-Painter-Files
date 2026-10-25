@@ -13,6 +13,10 @@ import tempfile
 import zipfile
 
 
+PROJECT_METADATA_MEMBERS = ('manifest.json', 'metadata.json', 'structure.json',
+                            'groups.json', 'datasets.json', 'raster/manifest.json')
+
+
 @dataclass(frozen=True)
 class CompressionSettings:
     method: str = 'deflate'
@@ -46,7 +50,8 @@ def _member_key(name):
     parts = name.rstrip('/').split('/')
     if any(part in ('', '.', '..') or part.endswith((' ', '.')) for part in parts):
         raise ValueError(f'unsafe archive member: {name!r}')
-    return '/'.join(parts).casefold()
+    # Archive members are case-sensitive. Numeric cache paths preserve that on Windows.
+    return '/'.join(parts)
 
 
 class ArchiveWriter:
@@ -174,9 +179,12 @@ class ArchiveReader:
         class DiskIO(Py7zIO):
             def __init__(self, path):
                 self.file = path.open('w+b')
+                self._size = 0
 
             def write(self, data):
-                return self.file.write(data)
+                count = self.file.write(data)
+                self._size = max(self._size, self.file.tell())
+                return count
 
             def read(self, size=None):
                 return self.file.read(-1 if size is None else size)
@@ -188,7 +196,7 @@ class ArchiveReader:
                 self.file.flush()
 
             def size(self):
-                return self.file.seek(0, 2)
+                return self._size
 
             def close(self):
                 self.file.close()
@@ -205,6 +213,7 @@ class ArchiveReader:
 
         factory = DiskFactory()
         try:
+            self._archive.reset()
             self._archive.extract(targets=sorted(selected), factory=factory)
         finally:
             for output in factory.outputs:
@@ -242,15 +251,19 @@ def open_archive(source, members=None):
 
 def verify_project_archive(archive, full=False):
     """Validate member references before an archive can replace its source."""
-    manifest = json.loads(archive.read('manifest.json'))
+    def object_member(name):
+        value = json.loads(archive.read(name))
+        if not isinstance(value, dict):
+            raise ValueError(f'invalid project metadata object: {name}')
+        return value
+
+    manifest = object_member('manifest.json')
     if manifest.get('errors'):
         raise ValueError('project extraction failed: ' + '; '.join(map(str, manifest['errors'])))
-    for name in ('metadata.json', 'structure.json'):
-        json.loads(archive.read(name))
-    groups = json.loads(archive.read('groups.json'))
-    datasets = json.loads(archive.read('datasets.json'))
-    if not isinstance(groups, dict) or not isinstance(datasets, dict):
-        raise ValueError('invalid project member index')
+    metadata = object_member('metadata.json')
+    object_member('structure.json')
+    groups = object_member('groups.json')
+    datasets = object_member('datasets.json')
     for key, actual in (('dataset_count', len(datasets)), ('group_count', len(groups))):
         if key in manifest and manifest[key] != actual:
             raise ValueError(f'project {key} does not match its index')
@@ -264,11 +277,14 @@ def verify_project_archive(archive, full=False):
         if info.get('decoded_file') and info['decoded_file'] not in members:
             raise ValueError(f'missing decoded member: {info["decoded_file"]}')
     if 'raster/manifest.json' in members:
-        raster = json.loads(archive.read('raster/manifest.json'))
+        raster = object_member('raster/manifest.json')
         for asset in raster.get('assets') or []:
             if asset.get('archive_path') not in members:
                 raise ValueError(f'missing raster member: {asset.get("archive_path")}')
     if full:
+        version = manifest.get('created_version') or metadata.get('painter_version')
+        if not isinstance(version, dict) or version.get('major') is None:
+            raise ValueError('archive has no source Painter version; source was kept')
         bad_member = archive.testzip()
         if bad_member:
             raise ValueError(f'archive integrity check failed: {bad_member}')

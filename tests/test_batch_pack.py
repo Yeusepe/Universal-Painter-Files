@@ -11,7 +11,6 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
-import zipfile
 
 import h5py
 import numpy as np
@@ -19,9 +18,15 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'spp_downgrader'))
 import uspp_tool
+from lib.project_archive import ArchiveReader, ArchiveWriter, CompressionSettings
 
 
 class BatchPackTests(unittest.TestCase):
+    method = 'deflate'
+
+    @property
+    def extension(self):
+        return CompressionSettings(self.method).extension
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -46,7 +51,8 @@ class BatchPackTests(unittest.TestCase):
     def run_batch(self, *inputs, **kwargs):
         args = argparse.Namespace(inputs=list(map(str, inputs)), recursive=False,
                                   output_dir=None, overwrite=False, delete_source=False,
-                                  dry_run=False, verbose=False)
+                                  dry_run=False, verbose=False,
+                                  compression_settings=CompressionSettings(self.method))
         for name, value in kwargs.items():
             setattr(args, name, value)
         stdout, stderr = io.StringIO(), io.StringIO()
@@ -62,7 +68,7 @@ class BatchPackTests(unittest.TestCase):
         self.assertIn('2 succeeded, 0 failed', stdout)
         self.assertEqual(before, [hashlib.sha256(path.read_bytes()).digest() for path in sources])
         for path in sources:
-            with zipfile.ZipFile(path.with_suffix('.uspp')) as archive:
+            with ArchiveReader(path.with_suffix(self.extension)) as archive:
                 self.assertIsNone(archive.testzip())
                 manifest = json.loads(archive.read('manifest.json'))
                 self.assertEqual(manifest['errors'], [])
@@ -90,7 +96,7 @@ class BatchPackTests(unittest.TestCase):
         mkdir.assert_not_called()
         unlink.assert_not_called()
         self.assertEqual((rc, stderr), (0, ''))
-        self.assertIn(f'WOULD PACK -> {output / "sub/first.uspp"}', stdout)
+        self.assertIn(f'WOULD PACK -> {output / f"sub/first{self.extension}"}', stdout)
         self.assertIn(f'WOULD DELETE -> {first} (after successful conversion)', stdout)
         self.assertIn('Dry run complete: 2 planned, 0 failed', stdout)
         self.assertNotIn('succeeded', stdout)
@@ -101,20 +107,20 @@ class BatchPackTests(unittest.TestCase):
 
     def test_dry_run_reports_existing_output_and_continues(self):
         first, second = self.project('first.spp'), self.project('second.spp')
-        first.with_suffix('.uspp').write_bytes(b'previous archive')
+        first.with_suffix(self.extension).write_bytes(b'previous archive')
         rc, stdout, stderr = self.run_batch(first, second, dry_run=True, delete_source=True)
         self.assertEqual(rc, 1)
         self.assertIn('output exists', stderr)
         self.assertIn('1 planned, 1 failed', stdout)
         self.assertNotIn(f'WOULD DELETE -> {first}', stdout)
-        self.assertIn(f'WOULD PACK -> {second.with_suffix(".uspp")}', stdout)
+        self.assertIn(f'WOULD PACK -> {second.with_suffix(self.extension)}', stdout)
         self.assertTrue(first.exists())
         self.assertTrue(second.exists())
-        self.assertFalse(second.with_suffix('.uspp').exists())
+        self.assertFalse(second.with_suffix(self.extension).exists())
 
     def test_dry_run_previews_overwrite_and_keeps_existing_files(self):
         source = self.project('project.spp')
-        output = source.with_suffix('.uspp')
+        output = source.with_suffix(self.extension)
         output.write_bytes(b'previous archive')
         before = source.read_bytes()
         rc, stdout, stderr = self.run_batch(source, dry_run=True, overwrite=True, delete_source=True)
@@ -145,22 +151,22 @@ class BatchPackTests(unittest.TestCase):
         source = self.project('project with spaces.spp')
         before = source.read_bytes()
         result = subprocess.run(
-            [sys.executable, str(ROOT / 'spp_downgrader/uspp_tool.py'), 'batch-pack',
+            [sys.executable, str(ROOT / 'spp_downgrader/uspp_tool.py'), 'batch-pack', '--compression', self.method,
              str(source), '--dry-run', '--delete-source'],
             cwd=self.root, capture_output=True, text=True, encoding='utf-8',
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('1 planned, 0 failed', result.stdout)
         self.assertEqual(source.read_bytes(), before)
-        self.assertFalse(source.with_suffix('.uspp').exists())
+        self.assertFalse(source.with_suffix(self.extension).exists())
         self.assert_no_temporaries()
 
     def test_folder_scanning_is_shallow_by_default(self):
         first = self.project('projects/one.spp')
         nested = self.project('projects/nested/two.SPP')
         self.assertEqual(self.run_batch(first.parent)[0], 0)
-        self.assertTrue(first.with_suffix('.uspp').exists())
-        self.assertFalse(nested.with_suffix('.uspp').exists())
+        self.assertTrue(first.with_suffix(self.extension).exists())
+        self.assertFalse(nested.with_suffix(self.extension).exists())
 
     def test_recursive_output_structure_and_overlapping_inputs(self):
         source = self.project('projects/sub/one.spp')
@@ -168,26 +174,26 @@ class BatchPackTests(unittest.TestCase):
         rc, stdout, _ = self.run_batch(source.parents[1], source, recursive=True, output_dir=str(output))
         self.assertEqual(rc, 0)
         self.assertIn('1 succeeded, 0 failed', stdout)
-        self.assertTrue((output / 'sub/one.uspp').exists())
-        self.assertFalse((output / 'one.uspp').exists())
+        self.assertTrue((output / f'sub/one{self.extension}').exists())
+        self.assertFalse((output / f'one{self.extension}').exists())
 
     def test_explicit_files_write_directly_to_output_folder(self):
         source = self.project('projects/sub/one.spp')
         output = self.root / 'archives'
         self.assertEqual(self.run_batch(source, output_dir=str(output))[0], 0)
-        self.assertTrue((output / 'one.uspp').exists())
+        self.assertTrue((output / f'one{self.extension}').exists())
 
     def test_existing_output_reports_failure_but_later_file_succeeds(self):
         first, second = self.project('first.spp'), self.project('second.spp')
-        first.with_suffix('.uspp').write_bytes(b'previous archive')
+        first.with_suffix(self.extension).write_bytes(b'previous archive')
         rc, stdout, stderr = self.run_batch(first, second, delete_source=True)
         self.assertEqual(rc, 1)
         self.assertIn('1 succeeded, 1 failed', stdout)
         self.assertIn('output exists', stderr)
         self.assertTrue(first.exists())
-        self.assertEqual(first.with_suffix('.uspp').read_bytes(), b'previous archive')
+        self.assertEqual(first.with_suffix(self.extension).read_bytes(), b'previous archive')
         self.assertFalse(second.exists())
-        self.assertTrue(second.with_suffix('.uspp').exists())
+        self.assertTrue(second.with_suffix(self.extension).exists())
 
     def test_corrupt_project_reports_failure_but_later_file_succeeds(self):
         bad = self.root / 'bad.spp'
@@ -198,7 +204,7 @@ class BatchPackTests(unittest.TestCase):
         self.assertIn('1 succeeded, 1 failed', stdout)
         self.assertIn(str(bad), stderr)
         self.assertTrue(bad.exists())
-        self.assertFalse(bad.with_suffix('.uspp').exists())
+        self.assertFalse(bad.with_suffix(self.extension).exists())
         self.assertFalse(good.exists())
         self.assert_no_temporaries()
 
@@ -224,21 +230,22 @@ class BatchPackTests(unittest.TestCase):
         self.assertEqual(stderr.count('multiple sources map'), 2)
         self.assertTrue(first.exists())
         self.assertTrue(second.exists())
-        self.assertFalse((output / 'same.uspp').exists())
-        self.assertTrue((output / 'good.uspp').exists())
+        self.assertFalse((output / f'same{self.extension}').exists())
+        self.assertTrue((output / f'good{self.extension}').exists())
 
     def test_overwrite_replaces_existing_archive(self):
         source = self.project('project.spp')
-        output = source.with_suffix('.uspp')
+        output = source.with_suffix(self.extension)
         output.write_bytes(b'previous archive')
         self.assertEqual(self.run_batch(source, overwrite=True)[0], 0)
-        self.assertTrue(zipfile.is_zipfile(output))
+        with ArchiveReader(output) as archive:
+            self.assertIsNone(archive.testzip())
         self.assertTrue(source.exists())
 
     def test_failed_overwrite_preserves_previous_archive_and_source(self):
         source = self.root / 'bad.spp'
         source.write_bytes(b'bad')
-        output = source.with_suffix('.uspp')
+        output = source.with_suffix(self.extension)
         output.write_bytes(b'previous archive')
         self.assertEqual(self.run_batch(source, overwrite=True, delete_source=True)[0], 1)
         self.assertEqual(output.read_bytes(), b'previous archive')
@@ -260,7 +267,7 @@ class BatchPackTests(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn('project extraction failed', stderr)
         self.assertTrue(source.exists())
-        self.assertFalse(source.with_suffix('.uspp').exists())
+        self.assertFalse(source.with_suffix(self.extension).exists())
         self.assert_no_temporaries()
 
     def test_duplicate_archive_entries_keep_source(self):
@@ -272,17 +279,17 @@ class BatchPackTests(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn('duplicate entries', stderr)
         self.assertTrue(source.exists())
-        self.assertFalse(source.with_suffix('.uspp').exists())
+        self.assertFalse(source.with_suffix(self.extension).exists())
         self.assert_no_temporaries()
 
     def test_delete_source_only_after_readable_archive_published(self):
         source = self.project('project.spp')
-        output = source.with_suffix('.uspp')
+        output = source.with_suffix(self.extension)
         unlink = Path.unlink
 
         def observe_unlink(path, *args, **kwargs):
             if path == source:
-                with zipfile.ZipFile(output) as archive:
+                with ArchiveReader(output) as archive:
                     self.assertIsNone(archive.testzip())
             return unlink(path, *args, **kwargs)
 
@@ -295,15 +302,66 @@ class BatchPackTests(unittest.TestCase):
 
     def test_integrity_failure_keeps_source_and_previous_output(self):
         source = self.project('project.spp')
-        output = source.with_suffix('.uspp')
+        output = source.with_suffix(self.extension)
         output.write_bytes(b'previous archive')
-        with mock.patch.object(zipfile.ZipFile, 'testzip', return_value='data/bad.bin'):
+        with mock.patch.object(ArchiveReader, 'testzip', return_value='data/bad.bin'):
             rc, _, stderr = self.run_batch(source, overwrite=True, delete_source=True)
         self.assertEqual(rc, 1)
         self.assertIn('integrity check failed', stderr)
         self.assertTrue(source.exists())
         self.assertEqual(output.read_bytes(), b'previous archive')
         self.assert_no_temporaries()
+
+    def test_real_corruption_keeps_source_and_old_output_then_continues(self):
+        first, second = self.project('first.spp'), self.project('second.spp')
+        output = first.with_suffix(self.extension)
+        output.write_bytes(b'previous archive')
+        pack = uspp_tool.cmd_pack
+
+        def corrupt_first(args):
+            rc = pack(args)
+            if Path(args.input) == first:
+                data = bytearray(Path(args.output).read_bytes())
+                data[40] ^= 0xFF
+                Path(args.output).write_bytes(data)
+            return rc
+
+        with mock.patch.object(uspp_tool, 'cmd_pack', side_effect=corrupt_first):
+            rc, stdout, _ = self.run_batch(first, second, overwrite=True, delete_source=True)
+        self.assertEqual(rc, 1)
+        self.assertIn('1 succeeded, 1 failed', stdout)
+        self.assertTrue(first.exists())
+        self.assertEqual(output.read_bytes(), b'previous archive')
+        self.assertFalse(second.exists())
+        self.assert_no_temporaries()
+
+    def test_incomplete_archive_never_deletes_source(self):
+        source = self.project('source.spp')
+
+        def incomplete_pack(args):
+            with ArchiveWriter(args.output, args.compression_settings) as archive:
+                for name in ('manifest.json', 'metadata.json', 'structure.json', 'groups.json'):
+                    archive.writestr(name, '{}')
+                archive.writestr('datasets.json', json.dumps({'payload': {'data_file': 'missing.bin'}}))
+            return 0
+
+        with mock.patch.object(uspp_tool, 'cmd_pack', side_effect=incomplete_pack):
+            rc, _, stderr = self.run_batch(source, delete_source=True)
+        self.assertEqual(rc, 1)
+        self.assertIn('missing', stderr)
+        self.assertTrue(source.exists())
+        self.assertFalse(source.with_suffix(self.extension).exists())
+        self.assert_no_temporaries()
+
+    def test_missing_source_version_keeps_the_project(self):
+        source = self.root / 'unknown.spp'
+        with h5py.File(source, 'w') as project:
+            project.create_dataset('payload.bin', data=np.arange(16, dtype='u1'))
+        rc, _, stderr = self.run_batch(source, delete_source=True)
+        self.assertEqual(rc, 1)
+        self.assertIn('no source Painter version', stderr)
+        self.assertTrue(source.exists())
+        self.assertFalse(source.with_suffix(self.extension).exists())
 
     def test_changed_source_is_not_deleted(self):
         source = self.project('project.spp')
@@ -320,7 +378,7 @@ class BatchPackTests(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn('source changed', stderr)
         self.assertTrue(source.exists())
-        self.assertFalse(source.with_suffix('.uspp').exists())
+        self.assertFalse(source.with_suffix(self.extension).exists())
 
     def test_delete_failure_reports_saved_archive_and_continues(self):
         first, second = self.project('first.spp'), self.project('second.spp')
@@ -337,7 +395,7 @@ class BatchPackTests(unittest.TestCase):
         self.assertIn('archive saved', stderr)
         self.assertIn('1 succeeded, 1 failed', stdout)
         self.assertTrue(first.exists())
-        self.assertTrue(first.with_suffix('.uspp').exists())
+        self.assertTrue(first.with_suffix(self.extension).exists())
         self.assertFalse(second.exists())
         self.assert_no_temporaries()
 
@@ -352,7 +410,7 @@ class BatchPackTests(unittest.TestCase):
             rc, _, _ = self.run_batch(source, delete_source=True)
         self.assertEqual(rc, 130)
         self.assertTrue(source.exists())
-        self.assertFalse(source.with_suffix('.uspp').exists())
+        self.assertFalse(source.with_suffix(self.extension).exists())
         self.assert_no_temporaries()
 
     def test_write_failure_does_not_stop_other_projects(self):
@@ -367,11 +425,11 @@ class BatchPackTests(unittest.TestCase):
         self.assertIn('1 succeeded, 1 failed', stdout)
         self.assertTrue(first.exists())
         self.assertFalse(second.exists())
-        self.assertTrue((output / 'second.uspp').exists())
+        self.assertTrue((output / f'second{self.extension}').exists())
 
     def test_output_created_during_pack_is_not_overwritten(self):
         source = self.project('project.spp')
-        output = source.with_suffix('.uspp')
+        output = source.with_suffix(self.extension)
         pack = uspp_tool.cmd_pack
 
         def racing_pack(args):
@@ -393,11 +451,11 @@ class BatchPackTests(unittest.TestCase):
         except OSError as error:
             self.skipTest(f'directory symlinks unavailable: {error}')
         self.assertEqual(self.run_batch(source.parent, recursive=True)[0], 0)
-        self.assertFalse(other.with_suffix('.uspp').exists())
+        self.assertFalse(other.with_suffix(self.extension).exists())
 
     def test_output_link_to_source_cannot_replace_a_project(self):
         source = self.project('project.spp')
-        output = source.with_suffix('.uspp')
+        output = source.with_suffix(self.extension)
         before = source.read_bytes()
         try:
             output.symlink_to(source)
@@ -418,19 +476,19 @@ class BatchPackTests(unittest.TestCase):
         self.assertEqual(self.run_batch(link, delete_source=True)[0], 0)
         self.assertFalse(link.exists())
         self.assertTrue(source.exists())
-        self.assertTrue(link.with_suffix('.uspp').exists())
+        self.assertTrue(link.with_suffix(self.extension).exists())
 
     def test_real_cli_continues_after_error_from_other_working_directory(self):
         source = self.project('project with spaces.spp')
         result = subprocess.run(
-            [sys.executable, str(ROOT / 'spp_downgrader/uspp_tool.py'), 'batch-pack',
+            [sys.executable, str(ROOT / 'spp_downgrader/uspp_tool.py'), 'batch-pack', '--compression', self.method,
              str(self.root / 'missing.spp'), str(source), '--delete-source'],
             cwd=self.root, capture_output=True, text=True, encoding='utf-8',
             env={**os.environ, 'PYTHONIOENCODING': 'utf-8'},
         )
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn('1 succeeded, 1 failed', result.stdout)
-        self.assertTrue(source.with_suffix('.uspp').exists())
+        self.assertTrue(source.with_suffix(self.extension).exists())
         self.assertFalse(source.exists())
 
     def test_real_cli_reports_unicode_paths_with_redirected_output(self):
@@ -438,7 +496,7 @@ class BatchPackTests(unittest.TestCase):
         second = self.project('next.spp')
         env = {key: value for key, value in os.environ.items() if not key.startswith('PYTHON')}
         result = subprocess.run(
-            [sys.executable, str(ROOT / 'spp_downgrader/uspp_tool.py'), 'batch-pack',
+            [sys.executable, str(ROOT / 'spp_downgrader/uspp_tool.py'), 'batch-pack', '--compression', self.method,
              str(self.root / '不存在.spp'), str(first), str(second)],
             cwd=self.root, capture_output=True, text=True, encoding='utf-8', env=env,
         )
@@ -446,8 +504,12 @@ class BatchPackTests(unittest.TestCase):
         self.assertIn('日本語.SPP', result.stdout)
         self.assertIn('不存在.spp', result.stderr)
         self.assertIn('2 succeeded, 1 failed', result.stdout)
-        self.assertTrue(first.with_suffix('.uspp').exists())
-        self.assertTrue(second.with_suffix('.uspp').exists())
+        self.assertTrue(first.with_suffix(self.extension).exists())
+        self.assertTrue(second.with_suffix(self.extension).exists())
+
+
+class Lzma2BatchPackTests(BatchPackTests):
+    method = 'lzma2'
 
 
 if __name__ == '__main__':

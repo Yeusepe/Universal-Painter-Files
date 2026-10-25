@@ -119,6 +119,31 @@ class ProjectArchiveTests(unittest.TestCase):
                 reader.read('manifest.json')
         self.assertIsNone(reader._cache)
 
+    def test_read_after_full_crc_test_restarts_the_seven_zip_decoder(self):
+        _, path = self.pack('lzma2')
+        with ArchiveReader(path) as reader:
+            self.assertIsNone(reader.testzip())
+            self.assertIn('format_version', json.loads(reader.read('manifest.json')))
+
+    def test_normal_pack_validation_caches_indexes_without_payloads(self):
+        source = self.project()
+        original = py7zr.SevenZipFile.extract
+        calls = []
+
+        def extract(archive, *args, **kwargs):
+            calls.append(set(kwargs['targets']))
+            return original(archive, *args, **kwargs)
+
+        with mock.patch.object(py7zr.SevenZipFile, 'extract', extract):
+            uspp_tool._batch_pack_one(source, self.root / 'normal.usppz', argparse.Namespace(
+                verbose=False, overwrite=False, delete_source=False,
+                compression_settings=CompressionSettings('lzma2')))
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(all(name.endswith('.json') for name in calls[0]))
+        self.assertIn('datasets.json', calls[0])
+        self.assertIn('raster/manifest.json', calls[0])
+        self.assertTrue(source.exists())
+
     def test_corrupt_archive_fails_full_verification(self):
         for method in ('deflate', 'lzma2'):
             with self.subTest(method=method):
@@ -135,7 +160,7 @@ class ProjectArchiveTests(unittest.TestCase):
             with self.subTest(method=method):
                 with ArchiveWriter(self.root / 'archive', CompressionSettings(method)) as writer:
                     writer.writestr('data/a.bin', b'first')
-                    for name in ('data/a.bin', 'DATA/A.bin', '../outside', '/absolute', 'C:/absolute',
+                    for name in ('data/a.bin', '../outside', '/absolute', 'C:/absolute',
                                  'data/../outside', 'data\\outside', 'file:stream', 'a./payload'):
                         with self.assertRaises(ValueError, msg=name):
                             writer.writestr(name, b'bad')
@@ -152,7 +177,8 @@ class ProjectArchiveTests(unittest.TestCase):
         path = self.root / 'duplicate.uspp'
         with zipfile.ZipFile(path, 'w') as writer:
             writer.writestr('a', b'one')
-            writer.writestr('A', b'two')
+            with self.assertWarns(UserWarning):
+                writer.writestr('a', b'two')
         with self.assertRaisesRegex(ValueError, 'duplicate'):
             ArchiveReader(path)
         path = self.root / 'link.uspp'
@@ -164,9 +190,24 @@ class ProjectArchiveTests(unittest.TestCase):
             ArchiveReader(path)
         with py7zr.SevenZipFile(self.root / 'duplicate.usppz', 'w') as writer:
             writer.writestr(b'one', 'a')
-            writer.writestr(b'two', 'A')
+            writer.writestr(b'two', 'a')
         with self.assertRaisesRegex(ValueError, 'duplicate'):
             ArchiveReader(self.root / 'duplicate.usppz')
+
+    def test_case_distinct_dataset_names_survive_both_formats(self):
+        source = self.project()
+        with h5py.File(source, 'a') as project:
+            project.create_dataset('paint/Case', data=np.array([1], dtype='u1'))
+            project.create_dataset('paint/case', data=np.array([2], dtype='u1'))
+        for method in ('deflate', 'lzma2'):
+            path = self.root / method
+            with contextlib.redirect_stdout(io.StringIO()):
+                uspp_tool.cmd_pack(argparse.Namespace(input=str(source), output=str(path), verbose=False,
+                    compression_settings=CompressionSettings(method)))
+            with ArchiveReader(path) as reader:
+                index = json.loads(reader.read('datasets.json'))
+                self.assertEqual(reader.read(index['paint/Case']['data_file']), b'\x01')
+                self.assertEqual(reader.read(index['paint/case']['data_file']), b'\x02')
 
     def test_missing_dataset_or_raster_reference_is_rejected(self):
         for reference in ('data/missing.bin', 'raster/assets/missing.png'):

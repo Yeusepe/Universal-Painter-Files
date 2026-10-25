@@ -17,7 +17,6 @@ Direction (S = .uspp created version, T = target/running version):
 import os
 import sys
 import json
-import zipfile
 import argparse
 import struct
 import tempfile
@@ -31,7 +30,8 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, "spp_extractor"))
 sys.path.insert(0, os.path.join(_HERE, "spp_builder"))
 
-from lib.project_archive import open_archive, verify_project_archive
+from lib.project_archive import CompressionSettings, PROJECT_METADATA_MEMBERS, open_archive, verify_project_archive
+from archive_options import describe_compression, resolve_compression
 
 # When frozen by PyInstaller, point the engine at the bundled profiles dir.
 if getattr(sys, "frozen", False):
@@ -236,9 +236,10 @@ def _batch_inputs(args):
     jobs = {}
     errors = []
     output_dir = Path(args.output_dir).resolve() if args.output_dir else None
+    settings = getattr(args, 'compression_settings', None) or CompressionSettings()
 
     def add(source, relative):
-        destination = (output_dir / relative if output_dir else source).with_suffix('.uspp')
+        destination = (output_dir / relative if output_dir else source).with_suffix(settings.extension)
         jobs.setdefault(source.resolve(), (source, destination))
 
     def walk_error(error):
@@ -292,6 +293,8 @@ def _batch_pack_one(source, destination, args):
     """Publish complete archives, then optionally remove the unchanged source."""
     temporary = None
     try:
+        if source.resolve() == destination.resolve():
+            raise ValueError(f'output points to a source project: {destination}')
         _check_batch_output(destination, args.overwrite)
         identity = _source_identity(source) if args.delete_source else None
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -299,13 +302,19 @@ def _batch_pack_one(source, destination, args):
             dir=destination.parent, prefix=f'.{destination.name}.', suffix='.tmp', delete=False,
         ) as handle:
             temporary = Path(handle.name)
-        pack_args = argparse.Namespace(input=str(source), output=str(temporary), verbose=args.verbose)
+        pack_args = argparse.Namespace(
+            input=str(source), output=str(temporary), verbose=args.verbose,
+            compression_settings=getattr(args, 'compression_settings', None),
+            raster_capture_dir=getattr(args, 'raster_capture_dir', None),
+            raster_budget_mb=getattr(args, 'raster_budget_mb', None),
+        )
         with open(os.devnull, 'w', encoding='utf-8') as quiet:
-            with nullcontext() if args.verbose else redirect_stdout(quiet):
+            with nullcontext() if args.verbose or os.environ.get('USPP_PROGRESS') else redirect_stdout(quiet):
                 rc = cmd_pack(pack_args)
         if rc:
             raise RuntimeError(f'packer returned exit code {rc}')
-        with open_archive(temporary) as archive:
+        members = None if args.delete_source else PROJECT_METADATA_MEMBERS
+        with open_archive(temporary, members=members) as archive:
             verify_project_archive(archive, full=args.delete_source)
         if args.delete_source:
             if _source_identity(source) != identity:
@@ -409,6 +418,13 @@ def cmd_batch_pack(args):
 
 
 def cmd_pack(args):
+    if getattr(args, 'publish_output', False):
+        publish_args = argparse.Namespace(**vars(args))
+        publish_args.overwrite = True  # Retain the existing single-file pack replacement behavior.
+        publish_args.delete_source = False
+        _batch_pack_one(Path(args.input), Path(args.output), publish_args)
+        print(f'packed -> {args.output}', flush=True)
+        return 0
     from spp_extractor import SPPExtractor, emit_progress
     emit_progress(-1, "Reading project…")
     ex = SPPExtractor(args.input, verbose=args.verbose)
@@ -434,7 +450,8 @@ def cmd_pack(args):
             int(args.raster_budget_mb) * 1024 * 1024
             if getattr(args, "raster_budget_mb", None) is not None else None
         ),
-        compression=getattr(args, 'compression_settings', None),
+        compression=(getattr(args, 'compression_settings', None) or
+                     CompressionSettings('lzma2' if str(args.output).lower().endswith('.usppz') else 'deflate')),
     )
     print(f"packed -> {args.output}")
     return 0
@@ -460,6 +477,8 @@ def cmd_convert(args):
             raster_capture_dir=getattr(args, "raster_capture_dir", None),
             raster_budget_mb=getattr(args, "raster_budget_mb", None),
             verbose=args.verbose,
+            compression_settings=(resolve_compression(output=keep) if keep else CompressionSettings()),
+            publish_output=bool(keep),
         )
         rc = cmd_pack(pack_ns)
         if rc != 0:
@@ -665,12 +684,24 @@ def _import_builder():
     return build_spp
 
 
+def _add_compression_options(parser):
+    parser.add_argument('--compression', choices=('lzma2', 'deflate'),
+                        help='Default: LZMA2, or the format selected by an explicit output extension')
+    parser.add_argument('--advanced-config', metavar='KEY=VALUE,...',
+                        help='LZMA2 options: preset, extreme, dict_size, mode, nice_len, mf, depth, lc, lp, pb')
+
+
 def main():
+    # The plugin also decodes converter progress as UTF-8.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8', errors='backslashreplace')
     ap = argparse.ArgumentParser(description="Universal .uspp converter")
     ap.add_argument("-v", "--verbose", action="store_true")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("pack"); p.add_argument("input"); p.add_argument("-o", "--output", required=True); p.add_argument("--raster-capture-dir"); p.add_argument("--raster-budget-mb", type=int); p.set_defaults(fn=cmd_pack)
+    p = sub.add_parser("pack"); p.add_argument("input"); p.add_argument("-o", "--output"); p.add_argument("--raster-capture-dir"); p.add_argument("--raster-budget-mb", type=int); p.set_defaults(fn=cmd_pack)
+    _add_compression_options(p)
     p = sub.add_parser('batch-pack', help='Pack .spp files and folders; report errors and continue')
     p.add_argument('inputs', nargs='+', help='One or more .spp files or folders')
     p.add_argument('-r', '--recursive', action='store_true', help='Include subfolders without following directory links')
@@ -679,6 +710,7 @@ def main():
     p.add_argument('--delete-source', action='store_true', help='Delete each source .spp only after its archive passes integrity checks')
     p.add_argument('--dry-run', action='store_true', help='Preview output paths and source deletions without changing files')
     p.add_argument('-v', '--verbose', action='store_true', default=argparse.SUPPRESS, help='Show packer details and tracebacks')
+    _add_compression_options(p)
     p.set_defaults(fn=cmd_batch_pack)
     p = sub.add_parser("raster-plan"); p.add_argument("input"); p.add_argument("--targets", default="all-lower"); p.add_argument("-o", "--output"); p.set_defaults(fn=cmd_raster_plan)
     p = sub.add_parser("plan"); p.add_argument("--uspp", required=True); p.add_argument("--target", required=True); p.set_defaults(fn=cmd_plan)
@@ -687,12 +719,33 @@ def main():
     p = sub.add_parser("info"); p.add_argument("--uspp", required=True); p.set_defaults(fn=cmd_info)
 
     args = ap.parse_args()
-    if args.cmd == 'batch-pack':
-        # Windows pipes otherwise use the legacy code page and cannot report all paths.
-        for stream in (sys.stdout, sys.stderr):
-            if hasattr(stream, 'reconfigure'):
-                stream.reconfigure(encoding='utf-8', errors='backslashreplace')
-    sys.exit(args.fn(args))
+    if args.cmd == 'convert' and args.keep_uspp:
+        try:
+            resolve_compression(output=args.keep_uspp)
+        except ValueError as error:
+            ap.error(str(error))
+    if args.cmd in ('pack', 'batch-pack'):
+        try:
+            args.compression_settings = resolve_compression(
+                args.compression, getattr(args, 'output', None), args.advanced_config)
+        except ValueError as error:
+            ap.error(str(error))
+        if args.cmd == 'pack':
+            args.output = args.output or str(Path(args.input).with_suffix(args.compression_settings.extension))
+            args.publish_output = True
+        print(describe_compression(args.compression_settings), flush=True)
+    try:
+        rc = args.fn(args)
+    except KeyboardInterrupt:
+        print('Cancelled.', file=sys.stderr)
+        rc = 130
+    except Exception as error:
+        print(f'error: {error}', file=sys.stderr)
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
+        rc = 1
+    sys.exit(rc)
 
 
 if __name__ == "__main__":

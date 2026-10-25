@@ -5,5 +5,4 @@ numpy
 mmh3
 pyspng
 PyYAML
-# py7zr is optional — used only for a substance-graph format check and skipped
-# gracefully if absent. It lives in requirements-dev.txt so the built exe bundles it.
+py7zr>=1.1.4,<2  # LZMA2 .usppz archives and embedded substance graph inspection
