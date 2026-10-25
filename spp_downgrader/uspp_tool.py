@@ -20,8 +20,12 @@ import json
 import argparse
 import struct
 import tempfile
+import io
+import multiprocessing
+import signal
+from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED
 from pathlib import Path
-from contextlib import nullcontext, redirect_stdout
+from contextlib import nullcontext, redirect_stdout, redirect_stderr
 
 TOOL_VERSION = "1.0.0"
 FORMAT_VERSION = 2
@@ -343,6 +347,87 @@ def _batch_pack_one(source, destination, args):
             temporary.unlink(missing_ok=True)
 
 
+def _worker_init():
+    # The parent handles cancellation; active archives finish safely.
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+
+def _batch_worker(source, destination, args):
+    output = io.StringIO()
+    try:
+        with redirect_stdout(output), redirect_stderr(output):
+            _batch_pack_one(source, destination, args)
+        return None, output.getvalue()
+    except Exception as error:
+        if args.verbose:
+            import traceback
+            traceback.print_exc(file=output)
+        return str(error), output.getvalue()
+
+
+def _positive_workers(value):
+    number = int(value)
+    if number < 1 or number > 61:
+        raise argparse.ArgumentTypeError('workers must be between 1 and 61')
+    return number
+
+
+def _parallel_batch(jobs, args, report):
+    """Bound queued work to the worker count; parent owns all console output."""
+    succeeded = 0
+    iterator = iter(jobs)
+    pending = {}
+    pool = ProcessPoolExecutor(max_workers=min(args.workers, len(jobs)),
+                               mp_context=multiprocessing.get_context('spawn'),
+                               initializer=_worker_init)
+
+    def submit():
+        job = next(iterator, None)
+        if job is not None:
+            index, source, destination = job
+            print(f'[{index}] START {source}', flush=True)
+            pending[pool.submit(_batch_worker, source, destination, args)] = (source, destination)
+
+    try:
+        for _ in range(min(args.workers, len(jobs))):
+            submit()
+        while pending:
+            done, _ = wait(pending, return_when=FIRST_COMPLETED)
+            for future in done:
+                source, destination = pending.pop(future)
+                try:
+                    error, output = future.result()
+                    if output and args.verbose:
+                        print(f'--- {source} ---\n{output}', flush=True)
+                    if error is not None:
+                        report(source, error)
+                    else:
+                        succeeded += 1
+                        print(f'OK -> {destination}' + (' (source deleted)' if args.delete_source else ''), flush=True)
+                except Exception as error:
+                    report(source, error)
+                submit()
+    except KeyboardInterrupt:
+        print('Cancellation requested. Waiting for active files to finish.', file=sys.stderr, flush=True)
+        # Do not start more files. Include completed in-flight results in totals.
+        for future, (source, destination) in pending.items():
+            if future.cancel():
+                continue
+            try:
+                error, _ = future.result()
+                if error is None:
+                    succeeded += 1
+                    print(f'OK -> {destination}' + (' (source deleted)' if args.delete_source else ''), flush=True)
+                else:
+                    report(source, error)
+            except Exception as error:
+                report(source, error)
+        return succeeded, True
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
+    return succeeded, False
+
+
 def cmd_batch_pack(args):
     succeeded = planned = failed = 0
     label = 'Dry run' if args.dry_run else 'Batch'
@@ -385,6 +470,22 @@ def cmd_batch_pack(args):
                 for source in owners:
                     invalid[source] = f'multiple sources map to output: {destination}'
 
+        if not args.dry_run and getattr(args, 'workers', 1) > 1:
+            ready = []
+            for index, (source, destination) in enumerate(jobs, 1):
+                if source in invalid:
+                    report(source, invalid[source])
+                else:
+                    ready.append((index, source, destination))
+            if ready:
+                print(f'Workers: {min(args.workers, len(ready))}', flush=True)
+                succeeded, cancelled = _parallel_batch(ready, args, report)
+                if cancelled:
+                    print(f'{label} cancelled: {totals()}.', file=sys.stderr)
+                    return 130
+            print(f'{label} complete: {totals()}.')
+            return 1 if failed else 0
+
         for index, (source, destination) in enumerate(jobs, 1):
             print(f'[{index}/{len(jobs)}] {source}', flush=True)
             try:
@@ -426,10 +527,10 @@ def cmd_pack(args):
         print(f'packed -> {args.output}', flush=True)
         return 0
     from spp_extractor import SPPExtractor, emit_progress
-    emit_progress(-1, "Reading project…")
+    emit_progress(-1, "Reading projectâ€¦")
     ex = SPPExtractor(args.input, verbose=args.verbose)
     extraction = ex.extract(decode_hbo=False, skip_texture_cache=True)
-    emit_progress(0.10, "Compressing project…")
+    emit_progress(0.10, "Compressing projectâ€¦")
     cv = extraction.metadata.get("painter_version") or {}
     created = dict(cv) if cv.get("major") is not None else None
     extra = {
@@ -708,6 +809,8 @@ def main():
     p.add_argument('-o', '--output-dir', help='Write beneath this folder instead of beside each source')
     p.add_argument('--overwrite', action='store_true', help='Replace existing outputs only after packing succeeds')
     p.add_argument('--delete-source', action='store_true', help='Delete each source .spp only after its archive passes integrity checks')
+    p.add_argument('--workers', type=_positive_workers, default=1, metavar='N',
+                   help='Pack and compress up to N files in separate processes (1-61; default: 1)')
     p.add_argument('--dry-run', action='store_true', help='Preview output paths and source deletions without changing files')
     p.add_argument('-v', '--verbose', action='store_true', default=argparse.SUPPRESS, help='Show packer details and tracebacks')
     _add_compression_options(p)
@@ -749,4 +852,5 @@ def main():
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     main()

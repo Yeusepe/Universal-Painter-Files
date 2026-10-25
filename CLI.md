@@ -1,5 +1,21 @@
 # Batch conversion
 
+A worker processes one project at a time in a separate process.
+Use `--workers N` to pack and compress several files at once:
+
+```powershell
+uspp_tool batch-pack "A:\Projects" -r --compress --workers 2
+```
+
+The default is one worker. The allowed range is 1 to 61.
+Each worker needs its own memory for the project and compression.
+Start with two workers. Reduce the count if memory or disk use is too high.
+Workers keep the selected compression configuration and verify each archive before optional source deletion.
+The command checks output collisions before it starts workers.
+Results appear as files finish. With `--verbose`, each file's log appears after that file finishes.
+Dry runs remain sequential and do not start workers.
+Press Ctrl+C to stop scheduling files. Active files finish before the command exits with code 130.
+
 Extract the entire portable ZIP before you run `uspp_tool.exe`.
 Keep the executable beside its `_internal` folder. You do not need Python or Painter to run the executable.
 

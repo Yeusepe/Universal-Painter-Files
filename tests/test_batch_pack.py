@@ -78,6 +78,66 @@ class BatchPackTests(unittest.TestCase):
                 self.assertNotIn('texture-cache/cache.bin', datasets)
         self.assert_no_temporaries()
 
+    def test_parallel_cli_continues_after_failure_and_verifies_before_delete(self):
+        sources = [self.project('parallel first.spp'), self.project('parallel 日本語.spp')]
+        bad = self.root / 'bad.spp'
+        bad.write_bytes(b'not HDF5')
+        result = subprocess.run(
+            [sys.executable, str(ROOT / 'spp_downgrader/uspp_tool.py'),
+             'batch-pack', *map(str, [bad, *sources]), '--workers', '2',
+             '--delete-source', *(['--compress', '--advanced-config', 'preset=1']
+                                   if self.method == 'lzma2' else [])],
+            capture_output=True, text=True, encoding='utf-8', timeout=90,
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('Workers: 2', result.stdout)
+        self.assertIn('2 succeeded, 1 failed', result.stdout)
+        self.assertTrue(bad.exists())
+        for source in sources:
+            self.assertFalse(source.exists())
+            with ArchiveReader(source.with_suffix(self.extension)) as archive:
+                self.assertIsNone(archive.testzip())
+        self.assert_no_temporaries()
+
+    def test_parallel_collision_preflight_keeps_both_sources(self):
+        first, second = self.project('a/same.spp'), self.project('b/same.spp')
+        good = self.project('good.spp')
+        rc, stdout, stderr = self.run_batch(first, second, good, workers=2,
+            output_dir=str(self.root / 'out'), delete_source=True)
+        self.assertEqual(rc, 1, stdout + stderr)
+        self.assertIn('1 succeeded, 2 failed', stdout)
+        self.assertTrue(first.exists())
+        self.assertTrue(second.exists())
+        self.assertFalse(good.exists())
+
+    def test_invalid_worker_counts_rejected(self):
+        for count in ('0', '-1', '62', 'invalid'):
+            result = subprocess.run(
+                [sys.executable, str(ROOT / 'spp_downgrader/uspp_tool.py'),
+                 'batch-pack', str(self.root), '--workers', count],
+                capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+
+    def test_parallel_cancel_finishes_active_files_without_scheduling_more(self):
+        sources = [self.project(f'cancel-{index}.spp') for index in range(4)]
+        futures = []
+        for _ in range(2):
+            future = mock.Mock()
+            future.cancel.return_value = False
+            future.result.return_value = (None, '')
+            futures.append(future)
+        pool = mock.Mock()
+        pool.submit.side_effect = futures
+        with mock.patch.object(uspp_tool, 'ProcessPoolExecutor', return_value=pool), \
+             mock.patch.object(uspp_tool, 'wait', side_effect=KeyboardInterrupt):
+            rc, stdout, stderr = self.run_batch(*sources, workers=2)
+        self.assertEqual(rc, 130)
+        self.assertEqual(pool.submit.call_count, 2)
+        self.assertIn('2 succeeded, 0 failed', stderr)
+        pool.shutdown.assert_called_once_with(wait=True, cancel_futures=True)
+        for future in futures:
+            future.result.assert_called_once()
+
     def assert_no_temporaries(self):
         self.assertEqual(list(self.root.rglob('*.tmp')), [])
 
