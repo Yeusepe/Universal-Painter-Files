@@ -281,12 +281,16 @@ def _source_identity(source):
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
 
 
+def _check_batch_output(destination, overwrite):
+    if not overwrite and os.path.lexists(destination):
+        raise FileExistsError(f'output exists: {destination}. Use --overwrite to replace it')
+
+
 def _batch_pack_one(source, destination, args):
     """Publish complete archives, then optionally remove the unchanged source."""
     temporary = None
     try:
-        if not args.overwrite and os.path.lexists(destination):
-            raise FileExistsError(f'output exists: {destination}. Use --overwrite to replace it')
+        _check_batch_output(destination, args.overwrite)
         identity = _source_identity(source) if args.delete_source else None
         destination.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
@@ -338,7 +342,12 @@ def _batch_pack_one(source, destination, args):
 
 
 def cmd_batch_pack(args):
-    succeeded = failed = 0
+    succeeded = planned = failed = 0
+    label = 'Dry run' if args.dry_run else 'Batch'
+
+    def totals():
+        count = f'{planned} planned' if args.dry_run else f'{succeeded} succeeded'
+        return f'{count}, {failed} failed'
 
     def report(source, error):
         nonlocal failed
@@ -350,7 +359,7 @@ def cmd_batch_pack(args):
         for source, error in errors:
             report(source, error)
         if not jobs:
-            print(f'Batch complete: 0 succeeded, {failed} failed. No matching .spp files.')
+            print(f'{label} complete: {totals()}. No matching .spp files.')
             return 2
 
         destinations = {}
@@ -379,6 +388,14 @@ def cmd_batch_pack(args):
             try:
                 if source in invalid:
                     raise ValueError(invalid[source])
+                if args.dry_run:
+                    _check_batch_output(destination, args.overwrite)
+                    action = 'REPLACE' if os.path.lexists(destination) else 'PACK'
+                    print(f'WOULD {action} -> {destination}', flush=True)
+                    if args.delete_source:
+                        print(f'WOULD DELETE -> {source} (after successful conversion)', flush=True)
+                    planned += 1
+                    continue
                 _batch_pack_one(source, destination, args)
                 succeeded += 1
                 print(f'OK -> {destination}' + (' (source deleted)' if args.delete_source else ''), flush=True)
@@ -388,13 +405,13 @@ def cmd_batch_pack(args):
                     import traceback
                     traceback.print_exc()
     except KeyboardInterrupt:
-        print(f'Batch cancelled: {succeeded} succeeded, {failed} failed.', file=sys.stderr)
+        print(f'{label} cancelled: {totals()}.', file=sys.stderr)
         return 130
     except (OSError, ValueError, RuntimeError) as error:
         report('batch inputs', error)
-        print(f'Batch complete: {succeeded} succeeded, {failed} failed.')
+        print(f'{label} complete: {totals()}.')
         return 2
-    print(f'Batch complete: {succeeded} succeeded, {failed} failed.')
+    print(f'{label} complete: {totals()}.')
     return 1 if failed else 0
 
 
@@ -651,6 +668,7 @@ def main():
     p.add_argument('-o', '--output-dir', help='Write beneath this folder instead of beside each source')
     p.add_argument('--overwrite', action='store_true', help='Replace existing outputs only after packing succeeds')
     p.add_argument('--delete-source', action='store_true', help='Delete each source .spp only after its archive passes integrity checks')
+    p.add_argument('--dry-run', action='store_true', help='Preview output paths and source deletions without changing files')
     p.add_argument('-v', '--verbose', action='store_true', default=argparse.SUPPRESS, help='Show packer details and tracebacks')
     p.set_defaults(fn=cmd_batch_pack)
     p = sub.add_parser("raster-plan"); p.add_argument("input"); p.add_argument("--targets", default="all-lower"); p.add_argument("-o", "--output"); p.set_defaults(fn=cmd_raster_plan)

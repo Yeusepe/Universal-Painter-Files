@@ -45,7 +45,8 @@ class BatchPackTests(unittest.TestCase):
 
     def run_batch(self, *inputs, **kwargs):
         args = argparse.Namespace(inputs=list(map(str, inputs)), recursive=False,
-                                  output_dir=None, overwrite=False, delete_source=False, verbose=False)
+                                  output_dir=None, overwrite=False, delete_source=False,
+                                  dry_run=False, verbose=False)
         for name, value in kwargs.items():
             setattr(args, name, value)
         stdout, stderr = io.StringIO(), io.StringIO()
@@ -73,6 +74,86 @@ class BatchPackTests(unittest.TestCase):
 
     def assert_no_temporaries(self):
         self.assertEqual(list(self.root.rglob('*.tmp')), [])
+
+    def test_dry_run_previews_paths_without_opening_or_changing_projects(self):
+        first = self.project('projects/sub/first.spp')
+        second = first.parents[1] / 'invalid.SPP'
+        second.write_bytes(b'contents are not inspected in a dry run')
+        output = self.root / 'new outputs'
+        before = first.read_bytes()
+        with mock.patch.object(uspp_tool, '_batch_pack_one') as pack, \
+             mock.patch.object(Path, 'mkdir') as mkdir, \
+             mock.patch.object(Path, 'unlink') as unlink:
+            rc, stdout, stderr = self.run_batch(first.parents[1], recursive=True,
+                output_dir=str(output), dry_run=True, delete_source=True)
+        pack.assert_not_called()
+        mkdir.assert_not_called()
+        unlink.assert_not_called()
+        self.assertEqual((rc, stderr), (0, ''))
+        self.assertIn(f'WOULD PACK -> {output / "sub/first.uspp"}', stdout)
+        self.assertIn(f'WOULD DELETE -> {first} (after successful conversion)', stdout)
+        self.assertIn('Dry run complete: 2 planned, 0 failed', stdout)
+        self.assertNotIn('succeeded', stdout)
+        self.assertEqual(first.read_bytes(), before)
+        self.assertTrue(second.exists())
+        self.assertFalse(output.exists())
+        self.assert_no_temporaries()
+
+    def test_dry_run_reports_existing_output_and_continues(self):
+        first, second = self.project('first.spp'), self.project('second.spp')
+        first.with_suffix('.uspp').write_bytes(b'previous archive')
+        rc, stdout, stderr = self.run_batch(first, second, dry_run=True, delete_source=True)
+        self.assertEqual(rc, 1)
+        self.assertIn('output exists', stderr)
+        self.assertIn('1 planned, 1 failed', stdout)
+        self.assertNotIn(f'WOULD DELETE -> {first}', stdout)
+        self.assertIn(f'WOULD PACK -> {second.with_suffix(".uspp")}', stdout)
+        self.assertTrue(first.exists())
+        self.assertTrue(second.exists())
+        self.assertFalse(second.with_suffix('.uspp').exists())
+
+    def test_dry_run_previews_overwrite_and_keeps_existing_files(self):
+        source = self.project('project.spp')
+        output = source.with_suffix('.uspp')
+        output.write_bytes(b'previous archive')
+        before = source.read_bytes()
+        rc, stdout, stderr = self.run_batch(source, dry_run=True, overwrite=True, delete_source=True)
+        self.assertEqual((rc, stderr), (0, ''))
+        self.assertIn(f'WOULD REPLACE -> {output}', stdout)
+        self.assertIn(f'WOULD DELETE -> {source}', stdout)
+        self.assertEqual(source.read_bytes(), before)
+        self.assertEqual(output.read_bytes(), b'previous archive')
+        self.assert_no_temporaries()
+
+    def test_dry_run_reports_missing_inputs_and_collisions_then_continues(self):
+        first, second = self.project('a/same.spp'), self.project('b/same.spp')
+        good = self.project('good.spp')
+        output = self.root / 'out'
+        rc, stdout, stderr = self.run_batch(self.root / 'missing.spp', first, second, good,
+                                           output_dir=str(output), dry_run=True)
+        self.assertEqual(rc, 1)
+        self.assertIn('1 planned, 3 failed', stdout)
+        self.assertEqual(stderr.count('multiple sources map'), 2)
+        self.assertFalse(output.exists())
+
+    def test_dry_run_empty_folder_returns_two(self):
+        rc, stdout, _ = self.run_batch(self.root, dry_run=True)
+        self.assertEqual(rc, 2)
+        self.assertIn('0 planned, 1 failed', stdout)
+
+    def test_real_cli_dry_run_does_not_create_or_delete_files(self):
+        source = self.project('project with spaces.spp')
+        before = source.read_bytes()
+        result = subprocess.run(
+            [sys.executable, str(ROOT / 'spp_downgrader/uspp_tool.py'), 'batch-pack',
+             str(source), '--dry-run', '--delete-source'],
+            cwd=self.root, capture_output=True, text=True, encoding='utf-8',
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('1 planned, 0 failed', result.stdout)
+        self.assertEqual(source.read_bytes(), before)
+        self.assertFalse(source.with_suffix('.uspp').exists())
+        self.assert_no_temporaries()
 
     def test_folder_scanning_is_shallow_by_default(self):
         first = self.project('projects/one.spp')
