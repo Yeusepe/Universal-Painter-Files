@@ -77,8 +77,8 @@ process.
 
 | Command | Purpose |
 | --- | --- |
-| `pack <in.spp> [-o <out.usppz>]` | Packs one project. Defaults to LZMA2 `.usppz`. An explicit `.uspp` output selects ZIP. |
-| `batch-pack <files-or-folders...> [-r] [-o <folder>] [--overwrite] [--delete-source] [--dry-run]` | Packs multiple projects. Defaults to LZMA2 `.usppz`. Reports errors and continues. See [CLI.md](../CLI.md) for compression options, advanced configuration, and exit codes. |
+| `pack <in.spp> [-o <out.uspp>]` | Packs one project. Defaults to ZIP `.uspp`. Use `--compression lzma2` or an explicit `.usppz` output for LZMA2. |
+| `batch-pack <files-or-folders...> [-r] [-o <folder>] [--overwrite] [--delete-source] [--dry-run]` | Packs multiple projects. Defaults to ZIP `.uspp`. Reports errors and continues. See [CLI.md](../CLI.md) for compression options, advanced configuration, and exit codes. |
 | `info --uspp <file.uspp>` | Prints manifest fields such as created version, supported versions, format version, tool version, and source file. |
 | `plan --uspp <file.uspp> --target <version>` | Resolves the conversion direction and prints JSON showing whether the target is supported and what lossy changes are expected. |
 | `build --uspp <file.uspp> --target <version> -o <out.spp>` | Rebuilds a native `.spp` for the target version or for the stored version when the target can upgrade natively. |

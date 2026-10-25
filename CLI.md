@@ -27,16 +27,16 @@ If inputs overlap, the command processes each source once. The first input deter
 
 ## Archive formats
 
-The CLI writes `.usppz` by default. This format uses a 7z container with LZMA2 compression.
+The CLI writes `.uspp` by default. This format uses ZIP with Deflate level 1.
+Use `--compression lzma2` to write `.usppz` archives in a 7z container with LZMA2 compression.
 The recommended configuration uses preset 6 with extreme mode off.
 Each project gets its own solid stream, which shares compression history between archive members.
 The executable includes the Python library for 7z. You do not need to install 7-Zip.
 
-The existing `.uspp` format uses ZIP with Deflate level 1.
-Use `--compression deflate` to write this format in a batch:
+To use LZMA2 in a batch:
 
 ```powershell
-.\uspp_tool.exe batch-pack "A:\Projects" -r --compression deflate
+.\uspp_tool.exe batch-pack "A:\Projects" -r --compression lzma2
 ```
 
 For a single project, `pack` can choose the output name automatically:
@@ -45,7 +45,7 @@ For a single project, `pack` can choose the output name automatically:
 .\uspp_tool.exe pack "A:\Projects\Body.spp"
 ```
 
-This command writes `A:\Projects\Body.usppz`.
+This command writes `A:\Projects\Body.uspp`.
 If you specify an output filename, its extension selects the format.
 The command rejects a compression option that conflicts with the extension.
 
@@ -69,7 +69,7 @@ Neither format captures raster fallbacks through Painter during a batch.
 
 ## Output files
 
-By default, the batch command writes `name.usppz` beside `name.spp`.
+By default, the batch command writes `name.uspp` beside `name.spp`.
 Use `--output-dir` to write the archives elsewhere.
 Each folder input keeps its relative subfolder paths beneath the output folder.
 An explicit file input goes directly into the output folder.
@@ -78,7 +78,7 @@ An explicit file input goes directly into the output folder.
 .\uspp_tool.exe batch-pack "A:\Projects" -r -o "A:\Universal"
 ```
 
-For example, `A:\Projects\Character\Body.spp` becomes `A:\Universal\Character\Body.usppz`.
+For example, `A:\Projects\Character\Body.spp` becomes `A:\Universal\Character\Body.uspp`.
 If different sources map to the same output, the command reports those files as failures.
 It continues with the remaining files.
 
@@ -93,12 +93,13 @@ It replaces an existing output only after the new archive passes validation.
 
 ## Advanced LZMA2 configuration
 
+Select LZMA2 with `--compression lzma2` or an explicit `.usppz` output filename.
 Use `--advanced-config` with one quoted, comma-separated string.
 The selected preset supplies the initial configuration. Individual properties override that preset.
 The CLI prints the selected preset and overrides before it processes files.
 
 ```powershell
-.\uspp_tool.exe batch-pack "A:\Projects" -r `
+.\uspp_tool.exe batch-pack "A:\Projects" -r --compression lzma2 `
   --advanced-config "preset=9,extreme=true,dict_size=256MiB,nice_len=273,mf=bt4"
 ```
 

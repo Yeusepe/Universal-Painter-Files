@@ -145,12 +145,13 @@ it is the portable package Universal SPP can rebuild for a target version.
 
 ### `.usppz`
 
-The CLI defaults to `.usppz` for automatically named archives.
+The CLI defaults to `.uspp` for automatically named archives.
+Use `--compression lzma2` to create `.usppz` archives.
 This format stores the same project members in a 7z container with LZMA2 compression.
 The recommended configuration uses preset 6 with extreme mode off.
 The Painter plugin continues to use `.uspp` files.
 
-Use `--compression deflate` for batch ZIP output.
+An explicit `.usppz` output filename also selects LZMA2.
 Use `--advanced-config` to tune LZMA2.
 See [CLI.md](CLI.md) for the available properties and examples.
 

@@ -21,8 +21,8 @@ from test_project_versions import settings_bytes
 class ArchiveOptionsTests(unittest.TestCase):
     def test_format_selection_and_recommended_default(self):
         default = resolve_compression()
-        self.assertEqual(default.method, 'lzma2')
-        self.assertEqual(default.extension, '.usppz')
+        self.assertEqual(default.method, 'deflate')
+        self.assertEqual(default.extension, '.uspp')
         self.assertEqual((default.preset, default.extreme, default.overrides), (6, False, ()))
         for extension, method in (('.uspp', 'deflate'), ('.usppz', 'lzma2'), ('.USPP', 'deflate')):
             with self.subTest(extension=extension):
@@ -44,7 +44,7 @@ class ArchiveOptionsTests(unittest.TestCase):
         for text, expected in (('4096', 4096), ('4KiB', 4096), ('64 mib', 64 * 1024 ** 2),
                                ('1GiB', 1024 ** 3), ('1536MiB', 1536 * 1024 ** 2)):
             self.assertEqual(parse_advanced_config('dict_size=' + text)['dict_size'], expected)
-        settings = resolve_compression(advanced_config='preset=9,dict_size=64KiB')
+        settings = resolve_compression(method='lzma2', advanced_config='preset=9,dict_size=64KiB')
         self.assertEqual(settings.preset, 9)
         self.assertEqual(dict(settings.overrides), {'dict_size': 65536})
 
@@ -58,7 +58,7 @@ class ArchiveOptionsTests(unittest.TestCase):
         with mock.patch('lzma.LZMACompressor') as compressor:
             for text in invalid:
                 with self.subTest(text=text), self.assertRaises(ValueError):
-                    resolve_compression(advanced_config=text)
+                    resolve_compression(method='lzma2', advanced_config=text)
             compressor.assert_not_called()
         with self.assertRaisesRegex(ValueError, 'requires LZMA2'):
             resolve_compression(method='deflate', advanced_config='preset=6')
@@ -82,13 +82,15 @@ class ArchiveCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
         return result
 
-    def test_single_and_batch_defaults_create_usppz(self):
+    def test_single_and_batch_defaults_create_uspp(self):
         result = self.cli('pack', self.source)
-        self.assertIn('preset=6', result.stdout)
-        self.assertTrue(self.source.with_suffix('.usppz').exists())
+        self.assertIn('Deflate', result.stdout)
+        self.assertTrue(self.source.with_suffix('.uspp').exists())
+        with ArchiveReader(self.source.with_suffix('.uspp')) as archive:
+            self.assertEqual(archive.container, 'zip')
         output = self.root / 'batch'
         self.cli('batch-pack', self.source, '-o', output)
-        self.assertTrue((output / self.source.with_suffix('.usppz').name).exists())
+        self.assertTrue((output / self.source.with_suffix('.uspp').name).exists())
 
     def test_explicit_uspp_output_keeps_plugin_calls_compatible(self):
         output = self.root / 'plugin-style.uspp'
@@ -101,6 +103,11 @@ class ArchiveCliTests(unittest.TestCase):
         output = self.root / 'old format'
         self.cli('batch-pack', self.source, '-o', output, '--compression', 'deflate')
         self.assertTrue((output / self.source.with_suffix('.uspp').name).exists())
+        output = self.root / 'lzma batch'
+        result = self.cli('batch-pack', self.source, '-o', output, '--compression', 'lzma2')
+        self.assertIn('preset=6', result.stdout)
+        with ArchiveReader(output / self.source.with_suffix('.usppz').name) as archive:
+            self.assertEqual(archive.container, '7z')
         output = self.root / 'explicit.usppz'
         self.cli('pack', self.source, '-o', output)
         with ArchiveReader(output) as archive:
@@ -158,7 +165,7 @@ class ArchiveCliTests(unittest.TestCase):
     def test_dry_run_accepts_large_dictionary_without_creating_an_archive(self):
         output = self.root / 'not created'
         before = self.source.read_bytes()
-        result = self.cli('batch-pack', self.source, '-o', output, '--dry-run', '--delete-source',
+        result = self.cli('batch-pack', self.source, '-o', output, '--dry-run', '--delete-source', '--compression', 'lzma2',
                           '--advanced-config', 'preset=9,dict_size=1536MiB')
         self.assertIn('.usppz', result.stdout)
         self.assertIn('1 planned, 0 failed', result.stdout)

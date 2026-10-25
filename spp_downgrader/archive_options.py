@@ -68,7 +68,7 @@ def resolve_compression(method=None, output=None, advanced_config=None):
         raise ValueError(f'unknown compression method: {method}')
     if method and extension_method and method != extension_method:
         raise ValueError(f'--compression {method} conflicts with the output extension')
-    method = method or extension_method or 'lzma2'
+    method = method or extension_method or 'deflate'
     if advanced_config is not None and method != 'lzma2':
         raise ValueError('--advanced-config requires LZMA2 compression and .usppz output')
     values = parse_advanced_config(advanced_config) if advanced_config is not None else {}

@@ -686,7 +686,7 @@ def _import_builder():
 
 def _add_compression_options(parser):
     parser.add_argument('--compression', choices=('lzma2', 'deflate'),
-                        help='Default: LZMA2, or the format selected by an explicit output extension')
+                        help='Default: Deflate (.uspp), or the format selected by an explicit output extension')
     parser.add_argument('--advanced-config', metavar='KEY=VALUE,...',
                         help='LZMA2 options: preset, extreme, dict_size, mode, nice_len, mf, depth, lc, lp, pb')
 
