@@ -151,7 +151,7 @@ class BatchPackTests(unittest.TestCase):
         source = self.project('project with spaces.spp')
         before = source.read_bytes()
         result = subprocess.run(
-            [sys.executable, str(ROOT / 'spp_downgrader/uspp_tool.py'), 'batch-pack', '--compression', self.method,
+            [sys.executable, str(ROOT / 'spp_downgrader/uspp_tool.py'), 'batch-pack', *(['--compress'] if self.method == 'lzma2' else []),
              str(source), '--dry-run', '--delete-source'],
             cwd=self.root, capture_output=True, text=True, encoding='utf-8',
         )
@@ -481,7 +481,7 @@ class BatchPackTests(unittest.TestCase):
     def test_real_cli_continues_after_error_from_other_working_directory(self):
         source = self.project('project with spaces.spp')
         result = subprocess.run(
-            [sys.executable, str(ROOT / 'spp_downgrader/uspp_tool.py'), 'batch-pack', '--compression', self.method,
+            [sys.executable, str(ROOT / 'spp_downgrader/uspp_tool.py'), 'batch-pack', *(['--compress'] if self.method == 'lzma2' else []),
              str(self.root / 'missing.spp'), str(source), '--delete-source'],
             cwd=self.root, capture_output=True, text=True, encoding='utf-8',
             env={**os.environ, 'PYTHONIOENCODING': 'utf-8'},
@@ -496,7 +496,7 @@ class BatchPackTests(unittest.TestCase):
         second = self.project('next.spp')
         env = {key: value for key, value in os.environ.items() if not key.startswith('PYTHON')}
         result = subprocess.run(
-            [sys.executable, str(ROOT / 'spp_downgrader/uspp_tool.py'), 'batch-pack', '--compression', self.method,
+            [sys.executable, str(ROOT / 'spp_downgrader/uspp_tool.py'), 'batch-pack', *(['--compress'] if self.method == 'lzma2' else []),
              str(self.root / '不存在.spp'), str(first), str(second)],
             cwd=self.root, capture_output=True, text=True, encoding='utf-8', env=env,
         )

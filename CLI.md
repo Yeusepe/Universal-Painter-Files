@@ -28,7 +28,7 @@ If inputs overlap, the command processes each source once. The first input deter
 ## Archive formats
 
 The CLI writes `.uspp` by default. This format uses ZIP with Deflate level 1.
-Use `--compression lzma2` to write `.usppz` archives in a 7z container with LZMA2 compression.
+Use `--compress` to write `.usppz` archives in a 7z container with LZMA2 compression.
 The recommended configuration uses preset 6 with extreme mode off.
 Each project gets its own solid stream, which shares compression history between archive members.
 The executable includes the Python library for 7z. You do not need to install 7-Zip.
@@ -36,7 +36,7 @@ The executable includes the Python library for 7z. You do not need to install 7-
 To use LZMA2 in a batch:
 
 ```powershell
-.\uspp_tool.exe batch-pack "A:\Projects" -r --compression lzma2
+.\uspp_tool.exe batch-pack "A:\Projects" -r --compress
 ```
 
 For a single project, `pack` can choose the output name automatically:
@@ -47,7 +47,7 @@ For a single project, `pack` can choose the output name automatically:
 
 This command writes `A:\Projects\Body.uspp`.
 If you specify an output filename, its extension selects the format.
-The command rejects a compression option that conflicts with the extension.
+The command rejects `--compress` with an explicit `.uspp` output.
 
 ```powershell
 .\uspp_tool.exe pack "A:\Projects\Body.spp" -o "A:\Universal\Body.uspp"
@@ -93,13 +93,13 @@ It replaces an existing output only after the new archive passes validation.
 
 ## Advanced LZMA2 configuration
 
-Select LZMA2 with `--compression lzma2` or an explicit `.usppz` output filename.
+Select LZMA2 with `--compress` or an explicit `.usppz` output filename.
 Use `--advanced-config` with one quoted, comma-separated string.
 The selected preset supplies the initial configuration. Individual properties override that preset.
 The CLI prints the selected preset and overrides before it processes files.
 
 ```powershell
-.\uspp_tool.exe batch-pack "A:\Projects" -r --compression lzma2 `
+.\uspp_tool.exe batch-pack "A:\Projects" -r --compress `
   --advanced-config "preset=9,extreme=true,dict_size=256MiB,nice_len=273,mf=bt4"
 ```
 
@@ -125,7 +125,7 @@ For example, if you set `lp=2`, also set `lc=2` or lower.
 Size units accept either letter case. Fractional sizes, such as `0.5GiB`, are not accepted. Use `512MiB` instead.
 
 Unknown keys, duplicate keys, and invalid values stop the command before it processes any project.
-Advanced configuration requires LZMA2 output. The CLI rejects it with `--compression deflate` or an explicit `.uspp` output.
+Advanced configuration requires LZMA2 output. Select `--compress` or an explicit `.usppz` output to use it.
 Thread counts, solid-block sizes, and I/O buffer sizes are not exposed by this interface.
 
 The archive records the preset and overrides for later inspection with `info`.

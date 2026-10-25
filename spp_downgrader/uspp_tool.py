@@ -685,8 +685,8 @@ def _import_builder():
 
 
 def _add_compression_options(parser):
-    parser.add_argument('--compression', choices=('lzma2', 'deflate'),
-                        help='Default: Deflate (.uspp), or the format selected by an explicit output extension')
+    parser.add_argument('--compress', action='store_true',
+                        help='Use LZMA2 compression (.usppz); default: Deflate (.uspp)')
     parser.add_argument('--advanced-config', metavar='KEY=VALUE,...',
                         help='LZMA2 options: preset, extreme, dict_size, mode, nice_len, mf, depth, lc, lp, pb')
 
@@ -727,7 +727,7 @@ def main():
     if args.cmd in ('pack', 'batch-pack'):
         try:
             args.compression_settings = resolve_compression(
-                args.compression, getattr(args, 'output', None), args.advanced_config)
+                'lzma2' if args.compress else None, getattr(args, 'output', None), args.advanced_config)
         except ValueError as error:
             ap.error(str(error))
         if args.cmd == 'pack':

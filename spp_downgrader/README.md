@@ -77,7 +77,7 @@ process.
 
 | Command | Purpose |
 | --- | --- |
-| `pack <in.spp> [-o <out.uspp>]` | Packs one project. Defaults to ZIP `.uspp`. Use `--compression lzma2` or an explicit `.usppz` output for LZMA2. |
+| `pack <in.spp> [-o <out.uspp>]` | Packs one project. Defaults to ZIP `.uspp`. Use `--compress` or an explicit `.usppz` output for LZMA2. |
 | `batch-pack <files-or-folders...> [-r] [-o <folder>] [--overwrite] [--delete-source] [--dry-run]` | Packs multiple projects. Defaults to ZIP `.uspp`. Reports errors and continues. See [CLI.md](../CLI.md) for compression options, advanced configuration, and exit codes. |
 | `info --uspp <file.uspp>` | Prints manifest fields such as created version, supported versions, format version, tool version, and source file. |
 | `plan --uspp <file.uspp> --target <version>` | Resolves the conversion direction and prints JSON showing whether the target is supported and what lossy changes are expected. |

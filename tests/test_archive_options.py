@@ -99,12 +99,12 @@ class ArchiveCliTests(unittest.TestCase):
             self.assertEqual(archive.container, 'zip')
             self.assertEqual(json.loads(archive.read('manifest.json'))['compression']['method'], 'deflate')
 
-    def test_batch_deflate_option_and_explicit_lzma2_output(self):
+    def test_batch_compress_flag_and_explicit_lzma2_output(self):
         output = self.root / 'old format'
-        self.cli('batch-pack', self.source, '-o', output, '--compression', 'deflate')
+        self.cli('batch-pack', self.source, '-o', output)
         self.assertTrue((output / self.source.with_suffix('.uspp').name).exists())
         output = self.root / 'lzma batch'
-        result = self.cli('batch-pack', self.source, '-o', output, '--compression', 'lzma2')
+        result = self.cli('batch-pack', self.source, '-o', output, '--compress')
         self.assertIn('preset=6', result.stdout)
         with ArchiveReader(output / self.source.with_suffix('.usppz').name) as archive:
             self.assertEqual(archive.container, '7z')
@@ -148,10 +148,11 @@ class ArchiveCliTests(unittest.TestCase):
     def test_invalid_config_returns_two_before_processing_and_creates_nothing(self):
         before = set(self.root.iterdir())
         cases = (
-            ['pack', self.source, '-o', self.root / 'bad.uspp', '--compression', 'lzma2'],
+            ['batch-pack', self.source, '--compression', 'lzma2'],
+            ['pack', self.source, '-o', self.root / 'bad.uspp', '--compress'],
             ['pack', self.source, '-o', self.root / 'bad.zip'],
             ['batch-pack', self.source, '-o', self.root / 'not created', '--advanced-config', 'threads=8'],
-            ['batch-pack', self.source, '--compression', 'deflate', '--advanced-config', 'preset=6'],
+            ['batch-pack', self.source, '--advanced-config', 'preset=6'],
             ['batch-pack', self.source, '--dry-run', '--advanced-config', 'dict_size=2GiB'],
             ['convert', self.source, '--target', '12.1', '-o', self.root / 'rebuilt.spp',
              '--keep-uspp', self.root / 'bad.zip'],
@@ -165,7 +166,7 @@ class ArchiveCliTests(unittest.TestCase):
     def test_dry_run_accepts_large_dictionary_without_creating_an_archive(self):
         output = self.root / 'not created'
         before = self.source.read_bytes()
-        result = self.cli('batch-pack', self.source, '-o', output, '--dry-run', '--delete-source', '--compression', 'lzma2',
+        result = self.cli('batch-pack', self.source, '-o', output, '--dry-run', '--delete-source', '--compress',
                           '--advanced-config', 'preset=9,dict_size=1536MiB')
         self.assertIn('.usppz', result.stdout)
         self.assertIn('1 planned, 0 failed', result.stdout)
