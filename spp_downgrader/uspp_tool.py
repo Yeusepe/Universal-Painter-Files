@@ -20,6 +20,9 @@ import json
 import zipfile
 import argparse
 import struct
+import tempfile
+from pathlib import Path
+from contextlib import nullcontext, redirect_stdout
 
 TOOL_VERSION = "1.0.0"
 FORMAT_VERSION = 2
@@ -225,6 +228,155 @@ def _targets_for_raster_plan(source_label, targets_arg):
 
 
 # ------------------------------------------------------------------- subcommands
+
+def _batch_inputs(args):
+    """Discover before writing; the first input owns each duplicate source path."""
+    jobs = {}
+    errors = []
+    output_dir = Path(args.output_dir).resolve() if args.output_dir else None
+
+    def add(source, relative):
+        destination = (output_dir / relative if output_dir else source).with_suffix('.uspp')
+        jobs.setdefault(source.resolve(), (source, destination))
+
+    def walk_error(error):
+        errors.append((error.filename or 'folder', str(error)))
+
+    for value in args.inputs:
+        try:
+            path = Path(os.path.abspath(value))
+            path.stat()  # Report inaccessible or missing inputs instead of silently ignoring them.
+            if path.is_file():
+                if path.suffix.lower() != '.spp':
+                    raise ValueError('input file must have the .spp extension')
+                add(path, Path(path.name))
+            elif path.is_dir():
+                found = False
+                for folder, directories, files in os.walk(path, onerror=walk_error, followlinks=False):
+                    directories[:] = sorted(
+                        (name for name in directories
+                         if not os.path.islink(os.path.join(folder, name))
+                         and not getattr(os.path, 'isjunction', lambda p: False)(os.path.join(folder, name))),
+                        key=str.casefold,
+                    ) if args.recursive else []
+                    for name in sorted(files, key=str.casefold):
+                        if Path(name).suffix.lower() == '.spp':
+                            source = Path(folder) / name
+                            try:
+                                add(source, source.relative_to(path))
+                                found = True
+                            except (OSError, RuntimeError) as error:
+                                errors.append((str(source), str(error)))
+                if not found:
+                    errors.append((value, 'no .spp files found'))
+            else:
+                raise ValueError('input must be a file or folder')
+        except (OSError, ValueError, RuntimeError) as error:
+            errors.append((value, str(error)))
+    return list(jobs.values()), errors
+
+
+
+
+def _batch_pack_one(source, destination, args):
+    """Publish complete archives without changing source projects."""
+    temporary = None
+    try:
+        if not args.overwrite and os.path.lexists(destination):
+            raise FileExistsError(f'output exists: {destination}. Use --overwrite to replace it')
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            dir=destination.parent, prefix=f'.{destination.name}.', suffix='.tmp', delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+        pack_args = argparse.Namespace(input=str(source), output=str(temporary), verbose=args.verbose)
+        with open(os.devnull, 'w', encoding='utf-8') as quiet:
+            with nullcontext() if args.verbose else redirect_stdout(quiet):
+                rc = cmd_pack(pack_args)
+        if rc:
+            raise RuntimeError(f'packer returned exit code {rc}')
+        manifest, _ = load_manifest(temporary)
+        if manifest.get('errors'):
+            raise RuntimeError('project extraction failed: ' + '; '.join(map(str, manifest['errors'])))
+        with zipfile.ZipFile(temporary) as archive:
+            names = archive.namelist()
+            if len(names) != len(set(names)):
+                raise RuntimeError('archive contains duplicate entries; source was kept')
+        if args.overwrite:
+            os.replace(temporary, destination)
+        elif os.name == 'nt':
+            # On Windows rename() fails if the destination exists, including a race.
+            # Unlike hard links, it also works on removable FAT/exFAT volumes.
+            os.rename(temporary, destination)
+        else:
+            # link() cannot overwrite a file created after our existence check.
+            # The temporary is beside the output, so both paths are on the same volume.
+            os.link(temporary, destination)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def cmd_batch_pack(args):
+    succeeded = failed = 0
+
+    def report(source, error):
+        nonlocal failed
+        failed += 1
+        print(f'FAILED {source}: {error}', file=sys.stderr, flush=True)
+
+    try:
+        jobs, errors = _batch_inputs(args)
+        for source, error in errors:
+            report(source, error)
+        if not jobs:
+            print(f'Batch complete: 0 succeeded, {failed} failed. No matching .spp files.')
+            return 2
+
+        destinations = {}
+        invalid = {}
+        sources = set()
+        for source, _ in jobs:
+            try:
+                sources.add(source.resolve())
+            except (OSError, RuntimeError) as error:
+                invalid[source] = str(error)
+        for source, destination in jobs:
+            try:
+                key = destination.resolve()
+                if key in sources:
+                    invalid[source] = f'output points to a source project: {destination}'
+                destinations.setdefault(key, []).append(source)
+            except (OSError, RuntimeError) as error:
+                invalid[source] = str(error)
+        for destination, owners in destinations.items():
+            if len(owners) > 1:
+                for source in owners:
+                    invalid[source] = f'multiple sources map to output: {destination}'
+
+        for index, (source, destination) in enumerate(jobs, 1):
+            print(f'[{index}/{len(jobs)}] {source}', flush=True)
+            try:
+                if source in invalid:
+                    raise ValueError(invalid[source])
+                _batch_pack_one(source, destination, args)
+                succeeded += 1
+                print(f'OK -> {destination}', flush=True)
+            except Exception as error:
+                report(source, error)
+                if args.verbose:
+                    import traceback
+                    traceback.print_exc()
+    except KeyboardInterrupt:
+        print(f'Batch cancelled: {succeeded} succeeded, {failed} failed.', file=sys.stderr)
+        return 130
+    except (OSError, ValueError, RuntimeError) as error:
+        report('batch inputs', error)
+        print(f'Batch complete: {succeeded} succeeded, {failed} failed.')
+        return 2
+    print(f'Batch complete: {succeeded} succeeded, {failed} failed.')
+    return 1 if failed else 0
+
 
 def cmd_pack(args):
     from spp_extractor import SPPExtractor, emit_progress
@@ -473,6 +625,13 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("pack"); p.add_argument("input"); p.add_argument("-o", "--output", required=True); p.add_argument("--raster-capture-dir"); p.add_argument("--raster-budget-mb", type=int); p.set_defaults(fn=cmd_pack)
+    p = sub.add_parser('batch-pack', help='Pack .spp files and folders; report errors and continue')
+    p.add_argument('inputs', nargs='+', help='One or more .spp files or folders')
+    p.add_argument('-r', '--recursive', action='store_true', help='Include subfolders without following directory links')
+    p.add_argument('-o', '--output-dir', help='Write beneath this folder instead of beside each source')
+    p.add_argument('--overwrite', action='store_true', help='Replace existing outputs only after packing succeeds')
+    p.add_argument('-v', '--verbose', action='store_true', default=argparse.SUPPRESS, help='Show packer details and tracebacks')
+    p.set_defaults(fn=cmd_batch_pack)
     p = sub.add_parser("raster-plan"); p.add_argument("input"); p.add_argument("--targets", default="all-lower"); p.add_argument("-o", "--output"); p.set_defaults(fn=cmd_raster_plan)
     p = sub.add_parser("plan"); p.add_argument("--uspp", required=True); p.add_argument("--target", required=True); p.set_defaults(fn=cmd_plan)
     p = sub.add_parser("build"); p.add_argument("--uspp", required=True); p.add_argument("--target", required=True); p.add_argument("-o", "--output", required=True); p.set_defaults(fn=cmd_build)
@@ -480,6 +639,11 @@ def main():
     p = sub.add_parser("info"); p.add_argument("--uspp", required=True); p.set_defaults(fn=cmd_info)
 
     args = ap.parse_args()
+    if args.cmd == 'batch-pack':
+        # Windows pipes otherwise use the legacy code page and cannot report all paths.
+        for stream in (sys.stdout, sys.stderr):
+            if hasattr(stream, 'reconfigure'):
+                stream.reconfigure(encoding='utf-8', errors='backslashreplace')
     sys.exit(args.fn(args))
 
 
