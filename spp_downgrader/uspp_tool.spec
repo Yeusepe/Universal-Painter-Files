@@ -5,7 +5,7 @@
 # Bundles all data into a single "profiles/" dir inside the exe; uspp_tool sets
 # SPP_PROFILE_DIR to it at startup, and the frozen-aware loaders read from there.
 import os
-from PyInstaller.utils.hooks import collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_dynamic_libs, copy_metadata
 
 ROOT = os.path.abspath(os.getcwd())          # run from spp_downgrader/
 PROFILES = os.path.join(ROOT, "profiles")
@@ -20,6 +20,8 @@ datas = [
     (os.path.join(LIB, "v10_baking_schema.json"), "profiles"),
     (os.path.join(ROOT, "lossiness_messages.json"), "profiles"),
 ]
+# Retain version, source, and license metadata for the required 7z backend and its dependencies.
+datas += copy_metadata("py7zr", recursive=True)
 # auto-generated per-version schemas/defaults (v8.1_schema.json, v9_defaults.json, ...)
 for fn in os.listdir(LIB):
     if fn.endswith(("_schema.json", "_defaults.json")):
@@ -34,7 +36,8 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=["h5py", "h5py.defs", "h5py.utils", "h5py._proxy", "h5py.h5ac",
-                   "numpy", "mmh3", "yaml", "lz4", "lz4.block", "lz4._version",
+                   "numpy", "mmh3", "yaml", "lzma", "py7zr", "py7zr.io",
+                   "archive_options", "lib.project_archive", "lz4", "lz4.block", "lz4._version",
                    "pyspng", "pyspng._pyspng_c",
                    "lib.migration_profile", "lib.hbo_decode",
                    "lib.lossiness", "lib.raster_manifest", "lib.config_manager", "lib.type_code_mapper",

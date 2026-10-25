@@ -19,16 +19,17 @@ that the Painter plugin calls.
 
 ```powershell
 python --version          # 3.11 or newer
-pip install h5py numpy mmh3 PyYAML
+pip install -r requirements.txt
 ```
 
 Maintainer tools:
 
 ```powershell
-pip install pyinstaller py7zr minidump
+pip install -r requirements-dev.txt
 ```
 
-`py7zr` is only needed for paths that inspect embedded substance graph archives.
+Run these installation commands from the repository root.
+`py7zr` reads and writes LZMA2 `.usppz` archives. It also inspects embedded substance graph archives.
 `minidump` is only needed for Crashpad diagnostics.
 
 ## Quick Start
@@ -76,14 +77,15 @@ process.
 
 | Command | Purpose |
 | --- | --- |
-| `pack <in.spp> -o <out.uspp>` | Reads the `.spp`, captures the HDF5 structure and datasets, writes a portable `.uspp`, and records the source Painter version. |
-| `batch-pack <files-or-folders...> [-r] [-o <folder>] [--overwrite] [--delete-source] [--dry-run]` | Packs multiple projects. Reports errors and continues. Use `--dry-run` to preview changes. See [CLI.md](../CLI.md) for usage and exit codes. |
+| `pack <in.spp> [-o <out.usppz>]` | Packs one project. Defaults to LZMA2 `.usppz`. An explicit `.uspp` output selects ZIP. |
+| `batch-pack <files-or-folders...> [-r] [-o <folder>] [--overwrite] [--delete-source] [--dry-run]` | Packs multiple projects. Defaults to LZMA2 `.usppz`. Reports errors and continues. See [CLI.md](../CLI.md) for compression options, advanced configuration, and exit codes. |
 | `info --uspp <file.uspp>` | Prints manifest fields such as created version, supported versions, format version, tool version, and source file. |
 | `plan --uspp <file.uspp> --target <version>` | Resolves the conversion direction and prints JSON showing whether the target is supported and what lossy changes are expected. |
 | `build --uspp <file.uspp> --target <version> -o <out.spp>` | Rebuilds a native `.spp` for the target version or for the stored version when the target can upgrade natively. |
 | `convert <in.spp> --target <version> -o <out.spp>` | One-shot `.spp` -> `.spp`: packs to a temporary `.uspp`, then builds the target. Supports `--keep-uspp`, `--raster-capture-dir`, and `--raster-budget-mb`. |
 
 Version labels can include a patch, such as `10`, `12.1`, or `12.1.5`.
+`info`, `plan`, and `build` accept either `.uspp` or `.usppz` through the existing `--uspp` argument.
 The source revision is detected from the last-save fields inside the project,
 regardless of its filename or the version that originally created it. `info` and
 `plan` report the full saved revision as `source_revision`.

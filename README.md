@@ -110,7 +110,7 @@ Common actions:
 More plugin detail is in
 [`universal_spp_plugin/README.md`](universal_spp_plugin/README.md).
 
-## The Two File Formats
+## Project And Archive Formats
 
 ### `.spp`
 
@@ -142,6 +142,17 @@ The archive contains:
 
 That makes `.uspp` the handoff format. It is not a Painter-native project file;
 it is the portable package Universal SPP can rebuild for a target version.
+
+### `.usppz`
+
+The CLI defaults to `.usppz` for automatically named archives.
+This format stores the same project members in a 7z container with LZMA2 compression.
+The recommended configuration uses preset 6 with extreme mode off.
+The Painter plugin continues to use `.uspp` files.
+
+Use `--compression deflate` for batch ZIP output.
+Use `--advanced-config` to tune LZMA2.
+See [CLI.md](CLI.md) for the available properties and examples.
 
 ## Conversion Directions
 
@@ -215,8 +226,8 @@ universal_spp_plugin/bin/uspp_tool/uspp_tool.exe
 
 - Windows.
 - Python 3.11 or newer for source use.
-- Runtime Python packages: `h5py`, `numpy`, `mmh3`, `PyYAML`.
-- Maintainer and build packages: `pyinstaller`, `py7zr`, `minidump`.
+- Runtime Python packages: `h5py`, `lz4`, `numpy`, `mmh3`, `pyspng`, `PyYAML`, `py7zr`.
+- Maintainer and build packages: `pyinstaller`, `minidump`.
 
 The plugin itself is a normal Painter Python plugin. It does not use admin
 rights, DLL injection, or background services.
