@@ -160,6 +160,13 @@ together.
 
 ## Use The CLI Directly
 
+For batch conversion, use `batch-pack`. It reports file errors and continues with the remaining projects.
+See [CLI.md](CLI.md) for the portable executable, output folders, and the optional `--delete-source` flag.
+
+```powershell
+python spp_downgrader\uspp_tool.py batch-pack "A:\Projects" --recursive
+```
+
 Use this path for automation, testing, or conversion without the Painter plugin.
 The CLI does not require Painter to be installed for the conversion step.
 

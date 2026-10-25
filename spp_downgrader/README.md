@@ -77,6 +77,7 @@ process.
 | Command | Purpose |
 | --- | --- |
 | `pack <in.spp> -o <out.uspp>` | Reads the `.spp`, captures the HDF5 structure and datasets, writes a portable `.uspp`, and records the source Painter version. |
+| `batch-pack <files-or-folders...> [-r] [-o <folder>] [--overwrite] [--delete-source] [--dry-run]` | Packs multiple projects. Reports errors and continues. Use `--dry-run` to preview changes. See [CLI.md](../CLI.md) for usage and exit codes. |
 | `info --uspp <file.uspp>` | Prints manifest fields such as created version, supported versions, format version, tool version, and source file. |
 | `plan --uspp <file.uspp> --target <version>` | Resolves the conversion direction and prints JSON showing whether the target is supported and what lossy changes are expected. |
 | `build --uspp <file.uspp> --target <version> -o <out.spp>` | Rebuilds a native `.spp` for the target version or for the stored version when the target can upgrade natively. |
