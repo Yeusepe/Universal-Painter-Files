@@ -36,6 +36,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'spp_extractor'
 from hbo_encoder import encode_to_hbo
 from lib.config_manager import load_config
 from lib.hbo_reserializer import HBOSerializer
+from lib.shader_compat import LEGACY_OPENPBR_SHADER, OPENPBR_LOSS, uses_openpbr
 from spp_extractor import _version_value_offset
 
 
@@ -503,9 +504,10 @@ class SPPBuilder:
     }
 
     def _patch_shader_compat(self, raw: bytes):
-        """Inject stubs for v11/v12-only shader-helper functions that an embedded
-        shader CALLS but the v10- runtime does not DEFINE. Returns patched bytes, or
-        None if nothing to do / not text."""
+        """Replace OpenPBR shaders or patch newer helpers for legacy runtimes."""
+        if uses_openpbr(raw):
+            print("Warning: " + OPENPBR_LOSS)
+            return LEGACY_OPENPBR_SHADER
         try:
             text = raw.decode('utf-8')
         except Exception:
@@ -584,13 +586,11 @@ class SPPBuilder:
             raw_data = self._patch_projectsettings_ini(raw_data, self.target_major, target_minor)
             data_modified = True
 
-        # Patch embedded GLSL shaders for v10-and-below: inject compatibility stubs for
-        # shader-helper functions that exist in v11/v12's libs but not the older runtime
-        # (e.g. usesSSSScatteringColorChannel from lib-sss.glsl). Painter embeds the
-        # shader it was saved with, so a v11/v12 shader otherwise fails to compile in v10
-        # ("undefined variable") and renders purple. Only call-but-undefined functions
-        # are stubbed; the rest of the project's real shader is untouched.
-        if raw_data is not None and self.target_major and self.target_major <= 10 and path.endswith('.shader'):
+        # OpenPBR needs a complete fallback: removing imports leaves undefined calls.
+        # Keep resource paths stable so material references still resolve.
+        if (raw_data is not None and not self.preserve_source and self.target_major
+                and self.target_major <= 10 and path.endswith('.shader')
+                and '/.alg_meta/' not in path):
             patched = self._patch_shader_compat(raw_data)
             if patched is not None:
                 raw_data = patched

@@ -37,7 +37,7 @@ a = Analysis(
                    "numpy", "mmh3", "yaml", "lz4", "lz4.block", "lz4._version",
                    "pyspng", "pyspng._pyspng_c",
                    "lib.migration_profile", "lib.hbo_decode",
-                   "lib.lossiness", "lib.raster_manifest", "lib.config_manager", "lib.type_code_mapper",
+                   "lib.lossiness", "lib.shader_compat", "lib.raster_manifest", "lib.config_manager", "lib.type_code_mapper",
                    "lib.hbo_parser", "lib.dict_remover", "hbo_encoder", "spp_builder",
                    "spp_extractor", "spp_ext_models", "spp_ext_decoder",
                    # hbo_reserializer is now a package; list its submodules explicitly.

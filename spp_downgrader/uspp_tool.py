@@ -330,6 +330,16 @@ def cmd_plan(args):
         from lib.raster_manifest import summarize
         profile = mp.load(f"v{s_label}_to_v{t_label}")
         lost = build_lossiness_report(profile)
+        if parse_ver(t_label)[0] <= 10:
+            from lib.shader_compat import OPENPBR_LOSS, uses_openpbr
+            with zipfile.ZipFile(args.uspp) as zf:
+                datasets = json.loads(zf.read('datasets.json'))
+                for path in datasets:
+                    if path.endswith('.shader') and '/.alg_meta/' not in path:
+                        payload = 'data/' + path.replace('/', '_').replace('\\', '_') + '.bin'
+                        if payload in zf.namelist() and uses_openpbr(zf.read(payload)):
+                            lost.append(OPENPBR_LOSS)
+                            break
         raster_requests = _raster_requests_from_uspp(args.uspp, s_label, t_label)
         raster_summary = summarize(load_raster_manifest(args.uspp), raster_requests)
 

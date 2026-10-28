@@ -15,7 +15,7 @@ import urllib.request
 import zipfile
 
 
-PLUGIN_VERSION = "0.1.14"
+PLUGIN_VERSION = "0.1.15"
 OWNER = "Yeusepe"
 REPO = "Universal-Painter-Files"
 RELEASES_API_URL = f"https://api.github.com/repos/{OWNER}/{REPO}/releases"

@@ -1,5 +1,11 @@
 {
-  "_comment": "Maps downgrade transforms to plain-English, client-facing loss statements. Only GENUINELY lossy categories are listed (dropped data + width-shrinks). Renames, object<->array re-kinds, and enum<->bitmask value transforms are faithful and are NOT reported. Match order per category: exact key -> first matching glob pattern -> generic fallback (which humanizes the type/field name). Edit freely; uncurated keys still produce readable prose via 'generic'.",
+  "_comment": "Maps downgrade transforms to plain-English, client-facing loss statements. Lossy categories include dropped data, width-shrinks, and codec fallbacks. Renames, object<->array re-kinds, and enum<->bitmask value transforms are faithful and are NOT reported. Match order per category: exact key -> first matching glob pattern -> generic fallback (which humanizes the type/field name). Edit freely; uncurated keys still produce readable prose via 'generic'.",
+
+  "codec": {
+    "exact": {
+      "legacy_color_management": "Color management will use legacy mode; OCIO/ACE configuration is not preserved in the downgraded copy."
+    }
+  },
 
   "blacklist": {
     "exact": {
