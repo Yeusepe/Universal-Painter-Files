@@ -11,6 +11,7 @@ the repository root. The JavaScript tests use Node.js 18 or newer and its built-
 test runner; no npm packages or Painter installation are needed.
 
 ```text
+python native/build.py
 python -m unittest discover -s tests -q
 node --test tests/raster_capture.test.js
 ```
@@ -58,3 +59,7 @@ Do not upload copyrighted project files to issues or pull requests. Prefer a
 minimal synthetic file that reproduces the bug. If a real project is required,
 share only through a private channel agreed by the maintainers and only if you
 have permission to share every asset inside it.
+
+The portable workflow tests Linux x64 and both macOS architectures on native runners.
+It builds the CLI and plugin bundles, then tests an extracted CLI archive, including system Trash handling with disposable fixtures.
+Painter itself is not installed by these tests.

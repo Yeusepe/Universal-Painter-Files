@@ -242,7 +242,7 @@ It also validates dataset references, raster references, and the recorded source
 It keeps sources when conversion fails, an output already exists, the source version is missing, or a source changes during conversion.
 If deletion fails, the command keeps the archive, reports the error, and continues.
 
-Reading `.usppz` for planning, rebuilding, or full verification uses a temporary cache of expanded members on disk.
+Reading `.usppz` for planning or rebuilding uses a temporary cache of expanded members on disk.
 Allow disk space for the expanded project data. The tool removes the cache when the operation ends.
 The `info` command extracts only the manifest and version metadata.
 
@@ -272,3 +272,26 @@ python -m venv .venv
 
 The portable ZIP is `spp_downgrader\dist\uspp_tool-windows-x64.zip`.
 Omit `-CliOnly` to also stage the executable into the Painter plugin.
+
+## Linux and macOS
+
+Extract the matching `.tar.gz` archive. Run `./uspp_tool` from its extracted folder.
+All conversion options are the same as on Windows. Quote paths that contain spaces.
+
+```sh
+./uspp_tool pack "/home/me/Projects/Body.spp"
+./uspp_tool pack "/home/me/Projects/Body.spp" --compress
+./uspp_tool batch-pack "/home/me/Projects" -r --dry-run
+./uspp_tool batch-pack "/home/me/Projects" -r --compress --workers 2
+```
+
+On macOS, use paths such as `/Users/me/Projects/Body.spp`.
+The default remains `.uspp`. Add `--compress` to create `.usppz`.
+`--delete-source` and replacement of old outputs use the system Trash. They do not fall back to permanent deletion.
+If the volume cannot provide a Trash location, the command reports a failure and preserves the affected file.
+
+Build with `python build.py --cli-only` after installing `requirements-dev.txt` and a C compiler.
+For source-only use, build the native library with `python native/build.py` first.
+Linux requires GCC or Clang. macOS requires the Xcode command line tools.
+The build creates a separate archive for each operating system and architecture.
+Full verification streams through payload data without retaining expanded payload copies. Planning and rebuilding use a temporary disk cache.

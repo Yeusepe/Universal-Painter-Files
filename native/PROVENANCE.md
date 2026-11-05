@@ -9,3 +9,8 @@ The upstream source is dual-licensed. This distribution selects the BSD option.
 
 `build.ps1` builds a Windows x64 DLL with MSYS2 UCRT64 GCC. It uses the portable C implementation and Windows-native threads.
 It does not use CPU-specific `-march=native` flags or require an external 7-Zip installation.
+
+`python native/build.py` builds the native library on Windows, Linux, or macOS.
+Linux uses GCC or Clang with POSIX threads and produces `libfast-lzma2.so`.
+macOS uses the Xcode command line compiler and produces `libfast-lzma2.dylib` for the current Python architecture.
+Windows produces `fast-lzma2.dll`. The `CC` environment variable or `--compiler` selects another compiler.

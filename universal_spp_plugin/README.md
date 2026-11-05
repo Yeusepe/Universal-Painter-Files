@@ -49,6 +49,14 @@ integration layer over `bin/uspp_tool/uspp_tool.exe`.
 7. In Painter, choose **Python > Reload Plugins Folder**, or restart Painter.
 8. In the **Python** menu, make sure `universal_spp_plugin` is enabled.
 
+On Linux and macOS, download the plugin ZIP for your OS and architecture, or run `python build.py` from the repository root.
+The bundled converter is `bin/uspp_tool/uspp_tool`, without `.exe`.
+Use **Python > Plugins Folder** to locate the correct installation folder on either system.
+If a manual extraction loses permissions, run `chmod +x bin/uspp_tool/uspp_tool` inside the plugin folder.
+The plugin updater restores this permission automatically and refuses updates for another OS or architecture.
+Windows file associations and the Explorer conversion menu are not installed on Linux or macOS.
+Legacy raster capture uses the native exporter on Linux and macOS. The Windows-only UV guard bypass is not used there.
+
 After the plugin starts, Painter shows a **Universal** menu in the menu bar. The
 plugin also tries to add **Save as Universal (.uspp)...** to Painter's **File**
 menu.

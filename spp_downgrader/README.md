@@ -29,6 +29,9 @@ pip install -r requirements-dev.txt
 ```
 
 Run these installation commands from the repository root.
+Build the native compression library with `python native/build.py`.
+Use `python build.py --cli-only` to create a portable CLI for Windows, Linux, or macOS.
+Linux requires a C compiler. macOS requires the Xcode command line tools.
 `py7zr` reads and writes LZMA2 `.usppz` archives. It also inspects embedded substance graph archives.
 `minidump` is only needed for Crashpad diagnostics.
 

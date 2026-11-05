@@ -209,7 +209,7 @@ More engine detail is in
 
 The Windows build also compiles the pinned Fast LZMA2 dependency with MSYS2 UCRT64 GCC.
 The default compiler is `C:\msys64\ucrt64\bin\gcc.exe`. See `native/PROVENANCE.md` for its source revision and license.
-For source-only use, run `native/build.ps1` once before creating compressed archives.
+For source-only use, run `python native/build.py` once before creating or reading compressed archives.
 
 The plugin calls `universal_spp_plugin/bin/uspp_tool/uspp_tool.exe`. Client machines do not
 need Python when that executable is present. To build it yourself on Windows:
@@ -230,9 +230,40 @@ one-folder bundle to:
 universal_spp_plugin/bin/uspp_tool/uspp_tool.exe
 ```
 
+## Linux and macOS
+
+Download the portable archive for your operating system and CPU architecture.
+Linux uses `uspp_tool-linux-x64.tar.gz`. macOS uses `uspp_tool-macos-x64.tar.gz` for Intel or `uspp_tool-macos-arm64.tar.gz` for Apple Silicon.
+Extract the entire archive. Keep the `uspp_tool` executable beside its `_internal` folder.
+
+```sh
+tar -xzf uspp_tool-linux-x64.tar.gz
+./uspp_tool/uspp_tool batch-pack "/home/me/Projects" -r --dry-run
+./uspp_tool/uspp_tool pack "/home/me/Projects/Body.spp" --compress
+```
+
+To build from source on either system, install Python 3.11 or newer and a C compiler.
+On Linux, install GCC or Clang and the Python development tools for your distribution.
+On macOS, install the Xcode command line tools with `xcode-select --install`.
+
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements-dev.txt
+python build.py
+```
+
+`build.py` builds for the current operating system and Python architecture. It creates a portable CLI archive and a plugin ZIP in `spp_downgrader/dist`.
+Use `--cli-only` to skip plugin staging and packaging. Use `--compiler /path/to/cc` to select the compiler.
+The CLI tarballs preserve executable permissions and internal library links.
+Plugin ZIPs contain regular files. The plugin updater restores executable permissions and selects the matching OS and architecture.
+
+The Windows installer and Explorer context menu remain Windows-only. Linux and macOS use the portable CLI or Painter's Universal menu.
+The macOS bundles are not notarized. Live Painter integration requires testing in the installed Painter version on each system.
+
 ## Requirements
 
-- Windows.
+- Windows x64, Linux x64, or macOS on Intel or Apple Silicon.
 - Python 3.11 or newer for source use.
 - Runtime Python packages: `h5py`, `lz4`, `numpy`, `mmh3`, `pyspng`, `PyYAML`, `py7zr`.
 - Maintainer and build packages: `pyinstaller`, `minidump`.
