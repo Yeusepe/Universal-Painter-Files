@@ -253,6 +253,12 @@ python -m pip install -r requirements-dev.txt
 python build.py
 ```
 
+If pip builds `pyspng` from source on an Intel Mac, its bundled zlib needs an SDK compatibility flag:
+
+```sh
+CFLAGS="${CFLAGS:-} -Dfdopen=fdopen" python -m pip install -r requirements-dev.txt
+```
+
 `build.py` builds for the current operating system and Python architecture. It creates a portable CLI archive and a plugin ZIP in `spp_downgrader/dist`.
 Use `--cli-only` to skip plugin staging and packaging. Use `--compiler /path/to/cc` to select the compiler.
 The CLI tarballs preserve executable permissions and internal library links.

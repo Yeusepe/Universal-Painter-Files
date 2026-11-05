@@ -37,7 +37,9 @@ class BatchPackTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
-        self.root = Path(self.directory.name)
+        # macOS aliases /var to /private/var. Keep fixture paths and the
+        # child process's resolved disposal boundary in the same spelling.
+        self.root = Path(self.directory.name).resolve()
         self.native_recycle = uspp_tool._recycle_source
         self.trash = self.root / '.test-trash'
 

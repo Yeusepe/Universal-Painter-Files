@@ -33,7 +33,13 @@ jobs:
         with:
           node-version: '22'
       - name: Install dependencies
-        run: python -m pip install -r requirements-dev.txt
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # pyspng's bundled zlib otherwise replaces the SDK's fdopen declaration.
+            export CFLAGS="${CFLAGS:-} -Dfdopen=fdopen"
+          fi
+          python -m pip install -r requirements-dev.txt
       - name: Build native compression library
         run: python native/build.py
       - name: Test source
