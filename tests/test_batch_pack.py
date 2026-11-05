@@ -21,6 +21,13 @@ import uspp_tool
 from lib.project_archive import ArchiveReader, ArchiveWriter, CompressionSettings
 
 
+def _test_worker_init():
+    import signal
+    from cli_with_test_trash import test_recycle
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    uspp_tool._recycle_source = test_recycle
+
+
 class BatchPackTests(unittest.TestCase):
     method = 'deflate'
 
@@ -31,6 +38,24 @@ class BatchPackTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
+        self.native_recycle = uspp_tool._recycle_source
+        self.trash = self.root / '.test-trash'
+
+        def recycle_fixture(source):
+            self.assertIn(self.root, source.absolute().parents)
+            self.trash.mkdir(exist_ok=True)
+            source.rename(self.trash / source.name)
+
+        self.fixture_recycle = recycle_fixture
+        patcher = mock.patch.object(uspp_tool, '_recycle_source', side_effect=recycle_fixture)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(uspp_tool, '_worker_init', _test_worker_init)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = mock.patch.dict(os.environ, USPP_TEST_TRASH_ROOT=str(self.root))
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def project(self, name):
         path = self.root / name
@@ -83,7 +108,7 @@ class BatchPackTests(unittest.TestCase):
         bad = self.root / 'bad.spp'
         bad.write_bytes(b'not HDF5')
         result = subprocess.run(
-            [sys.executable, str(ROOT / 'spp_downgrader/uspp_tool.py'),
+            [sys.executable, str(ROOT / 'tests/cli_with_test_trash.py'),
              'batch-pack', *map(str, [bad, *sources]), '--workers', '2',
              '--delete-source', *(['--compress', '--advanced-config', 'preset=1']
                                    if self.method == 'lzma2' else [])],
@@ -113,7 +138,7 @@ class BatchPackTests(unittest.TestCase):
     def test_invalid_worker_counts_rejected(self):
         for count in ('0', '-1', '62', 'invalid'):
             result = subprocess.run(
-                [sys.executable, str(ROOT / 'spp_downgrader/uspp_tool.py'),
+                [sys.executable, str(ROOT / 'tests/cli_with_test_trash.py'),
                  'batch-pack', str(self.root), '--workers', count],
                 capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
@@ -157,7 +182,7 @@ class BatchPackTests(unittest.TestCase):
         unlink.assert_not_called()
         self.assertEqual((rc, stderr), (0, ''))
         self.assertIn(f'WOULD PACK -> {output / f"sub/first{self.extension}"}', stdout)
-        self.assertIn(f'WOULD DELETE -> {first} (after successful conversion)', stdout)
+        self.assertIn(f'WOULD RECYCLE -> {first} (after successful conversion)', stdout)
         self.assertIn('Dry run complete: 2 planned, 0 failed', stdout)
         self.assertNotIn('succeeded', stdout)
         self.assertEqual(first.read_bytes(), before)
@@ -172,7 +197,7 @@ class BatchPackTests(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn('output exists', stderr)
         self.assertIn('1 planned, 1 failed', stdout)
-        self.assertNotIn(f'WOULD DELETE -> {first}', stdout)
+        self.assertNotIn(f'WOULD RECYCLE -> {first}', stdout)
         self.assertIn(f'WOULD PACK -> {second.with_suffix(self.extension)}', stdout)
         self.assertTrue(first.exists())
         self.assertTrue(second.exists())
@@ -186,7 +211,7 @@ class BatchPackTests(unittest.TestCase):
         rc, stdout, stderr = self.run_batch(source, dry_run=True, overwrite=True, delete_source=True)
         self.assertEqual((rc, stderr), (0, ''))
         self.assertIn(f'WOULD REPLACE -> {output}', stdout)
-        self.assertIn(f'WOULD DELETE -> {source}', stdout)
+        self.assertIn(f'WOULD RECYCLE -> {source}', stdout)
         self.assertEqual(source.read_bytes(), before)
         self.assertEqual(output.read_bytes(), b'previous archive')
         self.assert_no_temporaries()
@@ -211,7 +236,7 @@ class BatchPackTests(unittest.TestCase):
         source = self.project('project with spaces.spp')
         before = source.read_bytes()
         result = subprocess.run(
-            [sys.executable, str(ROOT / 'spp_downgrader/uspp_tool.py'), 'batch-pack', *(['--compress'] if self.method == 'lzma2' else []),
+            [sys.executable, str(ROOT / 'tests/cli_with_test_trash.py'), 'batch-pack', *(['--compress'] if self.method == 'lzma2' else []),
              str(source), '--dry-run', '--delete-source'],
             cwd=self.root, capture_output=True, text=True, encoding='utf-8',
         )
@@ -301,6 +326,82 @@ class BatchPackTests(unittest.TestCase):
         with ArchiveReader(output) as archive:
             self.assertIsNone(archive.testzip())
         self.assertTrue(source.exists())
+        self.assertEqual((self.trash / output.name).read_bytes(), b'previous archive')
+
+    def test_overwrite_and_delete_source_recycle_whole_files_in_order(self):
+        source = self.project('project.spp')
+        original = source.read_bytes()
+        output = source.with_suffix(self.extension)
+        output.write_bytes(b'previous archive')
+        moved = []
+
+        def recycle(path):
+            moved.append(path)
+            if path == source:
+                with ArchiveReader(output) as archive:
+                    self.assertIsNone(archive.testzip())
+            self.fixture_recycle(path)
+
+        with mock.patch.object(uspp_tool, '_recycle_source', side_effect=recycle):
+            rc, stdout, stderr = self.run_batch(source, overwrite=True, delete_source=True)
+        self.assertEqual((rc, stderr), (0, ''))
+        self.assertEqual(moved, [output, source])
+        self.assertEqual((self.trash / output.name).read_bytes(), b'previous archive')
+        self.assertEqual((self.trash / source.name).read_bytes(), original)
+        self.assert_no_temporaries()
+
+    def test_overwrite_recycle_failure_keeps_old_archive_and_source(self):
+        source = self.project('project.spp')
+        output = source.with_suffix(self.extension)
+        output.write_bytes(b'previous archive')
+        with mock.patch.object(uspp_tool, '_recycle_source', side_effect=PermissionError('Recycle Bin unavailable')):
+            rc, _, _ = self.run_batch(source, overwrite=True, delete_source=True)
+        self.assertEqual(rc, 1)
+        self.assertEqual(output.read_bytes(), b'previous archive')
+        self.assertTrue(source.exists())
+        self.assert_no_temporaries()
+
+    def test_overwrite_does_not_trust_recycler_that_leaves_original(self):
+        source = self.project('project.spp')
+        output = source.with_suffix(self.extension)
+        output.write_bytes(b'previous archive')
+        with mock.patch.object(uspp_tool, '_recycle_source', return_value=None):
+            rc, _, stderr = self.run_batch(source, overwrite=True, delete_source=True)
+        self.assertEqual(rc, 1)
+        self.assertIn('previous archive was not moved', stderr)
+        self.assertEqual(output.read_bytes(), b'previous archive')
+        self.assertTrue(source.exists())
+
+    def test_overwrite_publish_failure_keeps_source_and_recycled_archive(self):
+        source = self.project('project.spp')
+        output = source.with_suffix(self.extension)
+        output.write_bytes(b'previous archive')
+        with mock.patch.object(uspp_tool, '_publish_archive', side_effect=PermissionError('Output locked')):
+            rc, _, stderr = self.run_batch(source, overwrite=True, delete_source=True)
+        self.assertEqual(rc, 1)
+        self.assertIn('previous archive is in the Recycle Bin', stderr)
+        self.assertEqual((self.trash / output.name).read_bytes(), b'previous archive')
+        self.assertTrue(source.exists())
+        self.assert_no_temporaries()
+
+    def test_overwrite_does_not_recycle_output_changed_during_packing(self):
+        source = self.project('project.spp')
+        output = source.with_suffix(self.extension)
+        output.write_bytes(b'previous archive')
+        pack = uspp_tool.cmd_pack
+
+        def pack_then_change(args):
+            rc = pack(args)
+            output.write_bytes(b'another application changed the archive')
+            return rc
+
+        with mock.patch.object(uspp_tool, 'cmd_pack', side_effect=pack_then_change):
+            rc, _, stderr = self.run_batch(source, overwrite=True, delete_source=True)
+        self.assertEqual(rc, 1)
+        self.assertIn('output changed', stderr)
+        self.assertEqual(output.read_bytes(), b'another application changed the archive')
+        self.assertFalse(self.trash.exists())
+        self.assertTrue(source.exists())
 
     def test_failed_overwrite_preserves_previous_archive_and_source(self):
         source = self.root / 'bad.spp'
@@ -345,18 +446,18 @@ class BatchPackTests(unittest.TestCase):
     def test_delete_source_only_after_readable_archive_published(self):
         source = self.project('project.spp')
         output = source.with_suffix(self.extension)
-        unlink = Path.unlink
+        recycle = uspp_tool._recycle_source
 
-        def observe_unlink(path, *args, **kwargs):
-            if path == source:
-                with ArchiveReader(output) as archive:
-                    self.assertIsNone(archive.testzip())
-            return unlink(path, *args, **kwargs)
+        def observe_recycle(path):
+            self.assertEqual(path, source)
+            with ArchiveReader(output) as archive:
+                self.assertIsNone(archive.testzip())
+            return recycle(path)
 
-        with mock.patch.object(Path, 'unlink', observe_unlink):
+        with mock.patch.object(uspp_tool, '_recycle_source', observe_recycle):
             rc, stdout, _ = self.run_batch(source, delete_source=True)
         self.assertEqual(rc, 0)
-        self.assertIn('source deleted', stdout)
+        self.assertIn('source moved to Recycle Bin', stdout)
         self.assertFalse(source.exists())
         self.assert_no_temporaries()
 
@@ -442,14 +543,14 @@ class BatchPackTests(unittest.TestCase):
 
     def test_delete_failure_reports_saved_archive_and_continues(self):
         first, second = self.project('first.spp'), self.project('second.spp')
-        unlink = Path.unlink
+        recycle = uspp_tool._recycle_source
 
-        def deny_source(path, *args, **kwargs):
+        def deny_source(path):
             if path == first:
-                raise PermissionError('source is locked')
-            return unlink(path, *args, **kwargs)
+                raise PermissionError('Recycle Bin unavailable')
+            return recycle(path)
 
-        with mock.patch.object(Path, 'unlink', deny_source):
+        with mock.patch.object(uspp_tool, '_recycle_source', deny_source):
             rc, stdout, stderr = self.run_batch(first, second, delete_source=True)
         self.assertEqual(rc, 1)
         self.assertIn('archive saved', stderr)
@@ -458,6 +559,34 @@ class BatchPackTests(unittest.TestCase):
         self.assertTrue(first.with_suffix(self.extension).exists())
         self.assertFalse(second.exists())
         self.assert_no_temporaries()
+
+    def test_progress_includes_finalization_verification_and_publish(self):
+        source = self.project('progress.spp')
+        with mock.patch.dict(os.environ, USPP_PROGRESS='1'):
+            rc, stdout, stderr = self.run_batch(source)
+        self.assertEqual((rc, stderr), (0, ''))
+        stages = ['Finishing compression...', 'Verifying archive...', 'Saving archive...', 'OK ->']
+        offsets = [stdout.index(stage) for stage in stages]
+        self.assertEqual(offsets, sorted(offsets))
+        self.assertIn('__USPP_PROGRESS__\t-1.0000\tVerifying archive...', stdout)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows recycle operation')
+    def test_windows_refuses_permanent_delete_when_recycling_is_unavailable(self):
+        import pythoncom
+        from win32com.shell import shell
+        source = self.project('unrecyclable.spp')
+        operation = mock.Mock()
+        operation.DeleteItem.side_effect = lambda item, sink: sink.PreDeleteItem(0, item)
+        with mock.patch.object(pythoncom, 'CoCreateInstance', return_value=operation), \
+             mock.patch.object(pythoncom, 'WrapObject', side_effect=lambda obj, iid: obj), \
+             mock.patch.object(shell, 'SHCreateItemFromParsingName', return_value=mock.Mock()), \
+             mock.patch.object(uspp_tool, '_recycle_source', self.native_recycle):
+            rc, stdout, stderr = self.run_batch(source, delete_source=True)
+        self.assertEqual(rc, 1, stdout + stderr)
+        self.assertTrue(source.exists())
+        self.assertTrue(source.with_suffix(self.extension).exists())
+        operation.PerformOperations.assert_not_called()
+        self.assertIn('archive saved', stderr)
 
     def test_cancel_removes_partial_archive_and_keeps_source(self):
         source = self.project('project.spp')
@@ -541,7 +670,7 @@ class BatchPackTests(unittest.TestCase):
     def test_real_cli_continues_after_error_from_other_working_directory(self):
         source = self.project('project with spaces.spp')
         result = subprocess.run(
-            [sys.executable, str(ROOT / 'spp_downgrader/uspp_tool.py'), 'batch-pack', *(['--compress'] if self.method == 'lzma2' else []),
+            [sys.executable, str(ROOT / 'tests/cli_with_test_trash.py'), 'batch-pack', *(['--compress'] if self.method == 'lzma2' else []),
              str(self.root / 'missing.spp'), str(source), '--delete-source'],
             cwd=self.root, capture_output=True, text=True, encoding='utf-8',
             env={**os.environ, 'PYTHONIOENCODING': 'utf-8'},
@@ -556,7 +685,7 @@ class BatchPackTests(unittest.TestCase):
         second = self.project('next.spp')
         env = {key: value for key, value in os.environ.items() if not key.startswith('PYTHON')}
         result = subprocess.run(
-            [sys.executable, str(ROOT / 'spp_downgrader/uspp_tool.py'), 'batch-pack', *(['--compress'] if self.method == 'lzma2' else []),
+            [sys.executable, str(ROOT / 'tests/cli_with_test_trash.py'), 'batch-pack', *(['--compress'] if self.method == 'lzma2' else []),
              str(self.root / '不存在.spp'), str(first), str(second)],
             cwd=self.root, capture_output=True, text=True, encoding='utf-8', env=env,
         )

@@ -38,6 +38,7 @@ import zipfile
 from datetime import datetime
 from typing import Dict, List, Any
 from pathlib import Path
+from lib.performance import span
 
 
 def emit_progress(frac, msg):
@@ -133,7 +134,8 @@ class SPPExtractor:
                     pass
 
             # Recursively traverse the file
-            hdf5_structure = self._build_structure_tree(f)
+            with span('extract.structure'):
+                hdf5_structure = self._build_structure_tree(f)
 
             # Extract all items
             def visitor(name: str, obj):
@@ -288,7 +290,8 @@ class SPPExtractor:
 
         # Read raw data
         try:
-            raw_data = bytes(obj[()])
+            with span('extract.read_dataset', dataset=path, bytes=int(obj.nbytes)):
+                raw_data = bytes(obj[()])
         except Exception as e:
             self.errors.append(f"Failed to read {path}: {e}")
             raw_data = b''
@@ -430,7 +433,7 @@ class SPPExtractor:
             }
             if extra_manifest:
                 manifest.update(extra_manifest)
-            manifest['compression'] = zf.settings.metadata()
+            manifest['compression'] = zf.compression_metadata()
             zf.writestr('manifest.json', json.dumps(manifest, indent=2))
 
             # Keep these first so metadata-only 7z reads stop before bulk payloads.
@@ -493,6 +496,8 @@ class SPPExtractor:
                     "assets": [],
                     "warnings": [f"could not attach raster capture: {e}"],
                 }, indent=2))
+
+            emit_progress(-1, "Finishing compression...")
 
         print(f"  Created USPP archive: {output_path}")
         print(f"  Datasets: {len(extraction.datasets)}")

@@ -23,6 +23,7 @@ import tempfile
 import io
 import multiprocessing
 import signal
+from dataclasses import replace
 from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED
 from pathlib import Path
 from contextlib import nullcontext, redirect_stdout, redirect_stderr
@@ -36,6 +37,7 @@ sys.path.insert(0, os.path.join(_HERE, "spp_builder"))
 
 from lib.project_archive import CompressionSettings, PROJECT_METADATA_MEMBERS, open_archive, verify_project_archive
 from archive_options import describe_compression, resolve_compression
+from lib.performance import profiled_pack, span
 
 # When frozen by PyInstaller, point the engine at the bundled profiles dir.
 if getattr(sys, "frozen", False):
@@ -289,10 +291,51 @@ def _source_identity(source):
 
 
 def _check_batch_output(destination, overwrite):
+    if os.path.lexists(destination) and destination.is_dir():
+        raise IsADirectoryError(f'output is a directory: {destination}')
     if not overwrite and os.path.lexists(destination):
         raise FileExistsError(f'output exists: {destination}. Use --overwrite to replace it')
 
 
+def _recycle_source(source):
+    """Use the native trash backend. Never fall back to permanent deletion."""
+    if os.name == 'nt':
+        # Refuse any operation that Windows cannot send to the Recycle Bin.
+        import pythoncom
+        from win32com.shell import shell, shellcon
+        from win32com.server.exception import COMException
+        from send2trash.win.IFileOperationProgressSink import FileOperationProgressSink
+
+        class RecycleOnlySink(FileOperationProgressSink):
+            def PreDeleteItem(self, flags, item):
+                if not flags & shellcon.TSF_DELETE_RECYCLE_IF_POSSIBLE:
+                    raise COMException('Windows cannot recycle this source', scode=-2147467260)
+
+        pythoncom.CoInitialize()
+        try:
+            operation = pythoncom.CoCreateInstance(
+                shell.CLSID_FileOperation, None, pythoncom.CLSCTX_ALL, shell.IID_IFileOperation)
+            operation.SetOperationFlags(
+                shellcon.FOF_NOCONFIRMATION | shellcon.FOF_NOERRORUI | shellcon.FOF_SILENT
+                | shellcon.FOFX_EARLYFAILURE | 0x00080000 | 0x20000000)
+            # FOFX_RECYCLEONDELETE | FOFX_ADDUNDORECORD (Windows 8+).
+            sink = pythoncom.WrapObject(RecycleOnlySink(), shell.IID_IFileOperationProgressSink)
+            item = shell.SHCreateItemFromParsingName(str(source.absolute()), None, shell.IID_IShellItem)
+            operation.DeleteItem(item, sink)
+            result = operation.PerformOperations()
+            if result or operation.GetAnyOperationsAborted():
+                raise OSError('Windows did not move the source to the Recycle Bin')
+        except (pythoncom.com_error, COMException) as error:
+            raise OSError(f'Could not move the source to the Recycle Bin: {error}') from error
+        finally:
+            pythoncom.CoUninitialize()
+        return
+    else:
+        from send2trash import send2trash
+    send2trash(str(source.absolute()))
+
+
+@profiled_pack
 def _batch_pack_one(source, destination, args):
     """Publish complete archives, then optionally remove the unchanged source."""
     temporary = None
@@ -300,6 +343,7 @@ def _batch_pack_one(source, destination, args):
         if source.resolve() == destination.resolve():
             raise ValueError(f'output points to a source project: {destination}')
         _check_batch_output(destination, args.overwrite)
+        previous_output = destination.lstat() if args.overwrite and os.path.lexists(destination) else None
         identity = _source_identity(source) if args.delete_source else None
         destination.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
@@ -317,34 +361,58 @@ def _batch_pack_one(source, destination, args):
                 rc = cmd_pack(pack_args)
         if rc:
             raise RuntimeError(f'packer returned exit code {rc}')
-        members = None if args.delete_source else PROJECT_METADATA_MEMBERS
-        with open_archive(temporary, members=members) as archive:
-            verify_project_archive(archive, full=args.delete_source)
-        if args.delete_source:
-            if _source_identity(source) != identity:
+        from spp_extractor import emit_progress
+        emit_progress(-1, 'Verifying archive...')
+        members = None if args.delete_source or previous_output is not None else PROJECT_METADATA_MEMBERS
+        with span('pack.verify', full=args.delete_source or previous_output is not None):
+            with open_archive(temporary, members=members, verification_only=True) as archive:
+                verify_project_archive(archive, full=args.delete_source)
+                if previous_output is not None and not args.delete_source:
+                    bad_member = archive.testzip()
+                    if bad_member:
+                        raise ValueError(f'archive integrity check failed: {bad_member}')
+        if args.delete_source or previous_output is not None:
+            if args.delete_source and _source_identity(source) != identity:
                 raise RuntimeError('source changed during conversion; source was kept')
             with temporary.open('r+b') as archive_file:
                 os.fsync(archive_file.fileno())
-        if args.overwrite:
-            os.replace(temporary, destination)
-        elif os.name == 'nt':
-            # On Windows rename() fails if the destination exists, including a race.
-            # Unlike hard links, it also works on removable FAT/exFAT volumes.
-            os.rename(temporary, destination)
-        else:
-            # link() cannot overwrite a file created after our existence check.
-            # The temporary is beside the output, so both paths are on the same volume.
-            os.link(temporary, destination)
+        emit_progress(-1, 'Saving archive...')
+        if previous_output is not None:
+            current = destination.lstat()
+            fields = ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns')
+            if any(getattr(current, field) != getattr(previous_output, field) for field in fields):
+                raise RuntimeError('output changed during conversion; previous archive was kept')
+            _recycle_source(destination)
+            if os.path.lexists(destination):
+                raise RuntimeError('previous archive was not moved to the Recycle Bin; source was kept')
+            print(f'RECYCLED previous archive -> {destination}', flush=True)
+        try:
+            with span('pack.publish'):
+                _publish_archive(temporary, destination)
+        except OSError as error:
+            if previous_output is not None:
+                raise RuntimeError(f'could not save the new archive; previous archive is in the Recycle Bin and source was kept: {error}') from error
+            raise
         if args.delete_source:
             try:
                 if _source_identity(source) != identity:
                     raise RuntimeError('source changed during conversion')
-                source.unlink()
+                _recycle_source(source)
+                if os.path.lexists(source):
+                    raise RuntimeError('source still exists after recycling')
             except (OSError, RuntimeError) as error:
-                raise RuntimeError(f'archive saved to {destination}, but source was not deleted: {error}') from error
+                raise RuntimeError(f'archive saved to {destination}, but source was not moved to the Recycle Bin: {error}') from error
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+
+
+def _publish_archive(temporary, destination):
+    if os.name == 'nt':
+        # rename() cannot overwrite a file created after recycling the previous output.
+        os.rename(temporary, destination)
+    else:
+        os.link(temporary, destination)
 
 
 def _worker_init():
@@ -403,7 +471,7 @@ def _parallel_batch(jobs, args, report):
                         report(source, error)
                     else:
                         succeeded += 1
-                        print(f'OK -> {destination}' + (' (source deleted)' if args.delete_source else ''), flush=True)
+                        print(f'OK -> {destination}' + (' (source moved to Recycle Bin)' if args.delete_source else ''), flush=True)
                 except Exception as error:
                     report(source, error)
                 submit()
@@ -417,7 +485,7 @@ def _parallel_batch(jobs, args, report):
                 error, _ = future.result()
                 if error is None:
                     succeeded += 1
-                    print(f'OK -> {destination}' + (' (source deleted)' if args.delete_source else ''), flush=True)
+                    print(f'OK -> {destination}' + (' (source moved to Recycle Bin)' if args.delete_source else ''), flush=True)
                 else:
                     report(source, error)
             except Exception as error:
@@ -478,6 +546,10 @@ def cmd_batch_pack(args):
                 else:
                     ready.append((index, source, destination))
             if ready:
+                settings = getattr(args, 'compression_settings', None)
+                if settings is not None and settings.method == 'lzma2' and not settings.threads:
+                    budget = max(1, (os.cpu_count() or 1) // min(args.workers, len(ready)))
+                    args.compression_settings = replace(settings, threads=min(24, budget))
                 print(f'Workers: {min(args.workers, len(ready))}', flush=True)
                 succeeded, cancelled = _parallel_batch(ready, args, report)
                 if cancelled:
@@ -495,13 +567,15 @@ def cmd_batch_pack(args):
                     _check_batch_output(destination, args.overwrite)
                     action = 'REPLACE' if os.path.lexists(destination) else 'PACK'
                     print(f'WOULD {action} -> {destination}', flush=True)
+                    if action == 'REPLACE':
+                        print(f'WOULD RECYCLE -> {destination} (existing archive, after successful conversion)', flush=True)
                     if args.delete_source:
-                        print(f'WOULD DELETE -> {source} (after successful conversion)', flush=True)
+                        print(f'WOULD RECYCLE -> {source} (after successful conversion)', flush=True)
                     planned += 1
                     continue
                 _batch_pack_one(source, destination, args)
                 succeeded += 1
-                print(f'OK -> {destination}' + (' (source deleted)' if args.delete_source else ''), flush=True)
+                print(f'OK -> {destination}' + (' (source moved to Recycle Bin)' if args.delete_source else ''), flush=True)
             except Exception as error:
                 report(source, error)
                 if args.verbose:
@@ -527,10 +601,11 @@ def cmd_pack(args):
         print(f'packed -> {args.output}', flush=True)
         return 0
     from spp_extractor import SPPExtractor, emit_progress
-    emit_progress(-1, "Reading projectâ€¦")
+    emit_progress(-1, "Reading project...")
     ex = SPPExtractor(args.input, verbose=args.verbose)
-    extraction = ex.extract(decode_hbo=False, skip_texture_cache=True)
-    emit_progress(0.10, "Compressing projectâ€¦")
+    with span('pack.extract'):
+        extraction = ex.extract(decode_hbo=False, skip_texture_cache=True)
+    emit_progress(0.10, "Compressing project...")
     cv = extraction.metadata.get("painter_version") or {}
     created = dict(cv) if cv.get("major") is not None else None
     extra = {
@@ -542,6 +617,13 @@ def cmd_pack(args):
     if created:
         extra["supported_versions"] = compute_supported_versions(ver_label(created["major"], created["minor"]))
         print(f"Detected Painter v{source_revision_of(extra, extraction.metadata)}")
+    with span('pack.write'):
+        _save_pack_archive(ex, extraction, args, extra)
+    print(f"packed -> {args.output}")
+    return 0
+
+
+def _save_pack_archive(ex, extraction, args, extra):
     ex.save_as_uspp(
         extraction,
         args.output,
@@ -554,8 +636,6 @@ def cmd_pack(args):
         compression=(getattr(args, 'compression_settings', None) or
                      CompressionSettings('lzma2' if str(args.output).lower().endswith('.usppz') else 'deflate')),
     )
-    print(f"packed -> {args.output}")
-    return 0
 
 
 def cmd_convert(args):
@@ -609,6 +689,7 @@ def cmd_info(args):
     print(json.dumps({
         "created_version": ver_label(*cv) if cv else None,
         "source_revision": source_revision_of(manifest, meta),
+        "source_file": manifest.get("source_file"),
         "supported_versions": manifest.get("supported_versions"),
         "format_version": manifest.get("format_version"),
         "tool_version": manifest.get("tool_version"),
@@ -652,6 +733,7 @@ def _plan_from_archive(args, archive):
         "lost_features": lost,
         "source_version": s_label,
         "source_revision": source_revision_of(manifest, meta),
+        "source_file": manifest.get("source_file"),
         "target_version": t_label,
         "tool_version": TOOL_VERSION,
     }
@@ -786,10 +868,12 @@ def _import_builder():
 
 
 def _add_compression_options(parser):
+    parser.add_argument('--timings', metavar='DIR',
+                        help='Write per-file JSON timing reports and live probe events to DIR')
     parser.add_argument('--compress', action='store_true',
                         help='Use LZMA2 compression (.usppz); default: Deflate (.uspp)')
     parser.add_argument('--advanced-config', metavar='KEY=VALUE,...',
-                        help='LZMA2 options: preset, extreme, dict_size, mode, nice_len, mf, depth, lc, lp, pb')
+                        help='LZMA2 options: preset, extreme, dict_size, threads, mode, nice_len, mf, depth, lc, lp, pb')
 
 
 def main():
@@ -807,8 +891,8 @@ def main():
     p.add_argument('inputs', nargs='+', help='One or more .spp files or folders')
     p.add_argument('-r', '--recursive', action='store_true', help='Include subfolders without following directory links')
     p.add_argument('-o', '--output-dir', help='Write beneath this folder instead of beside each source')
-    p.add_argument('--overwrite', action='store_true', help='Replace existing outputs only after packing succeeds')
-    p.add_argument('--delete-source', action='store_true', help='Delete each source .spp only after its archive passes integrity checks')
+    p.add_argument('--overwrite', action='store_true', help='Recycle existing outputs and replace them only after packing and verification succeed')
+    p.add_argument('--delete-source', action='store_true', help='Move each source .spp to the Recycle Bin only after its archive passes integrity checks')
     p.add_argument('--workers', type=_positive_workers, default=1, metavar='N',
                    help='Pack and compress up to N files in separate processes (1-61; default: 1)')
     p.add_argument('--dry-run', action='store_true', help='Preview output paths and source deletions without changing files')
