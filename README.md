@@ -97,7 +97,7 @@ Common actions:
 
 - **Universal > Save as Universal...** exports the current saved `.spp` as a
   `.uspp`.
-- **Universal > Open Universal...** opens a `.uspp` or a regular `.spp`. If you
+- **Universal > Open Universal...** opens a `.uspp`, `.usppz`, or regular `.spp`. If you
   pick a `.spp`, the plugin first packs it into a temporary `.uspp`, then plans
   the conversion, warns about lossy downgrades, builds a temporary `.spp`, and
   opens it.
@@ -149,7 +149,10 @@ The CLI defaults to `.uspp` for automatically named archives.
 Use `--compress` to create `.usppz` archives.
 This format stores the same project members in a 7z container with LZMA2 compression.
 The recommended configuration uses preset 6 with extreme mode off.
-The Painter plugin continues to use `.uspp` files.
+Fast LZMA2 provides the native encoder. The portable release bundles its Windows x64 library.
+Advanced liblzma-only configurations retain the original encoder and report that choice explicitly.
+The Painter plugin opens both `.uspp` and `.usppz` files.
+The plugin saves new archives as `.uspp` files.
 
 An explicit `.usppz` output filename also selects LZMA2.
 Use `--advanced-config` to tune LZMA2.
@@ -203,6 +206,10 @@ More engine detail is in
 [`spp_downgrader/README.md`](spp_downgrader/README.md).
 
 ## Build From Source
+
+The Windows build also compiles the pinned Fast LZMA2 dependency with MSYS2 UCRT64 GCC.
+The default compiler is `C:\msys64\ucrt64\bin\gcc.exe`. See `native/PROVENANCE.md` for its source revision and license.
+For source-only use, run `native/build.ps1` once before creating compressed archives.
 
 The plugin calls `universal_spp_plugin/bin/uspp_tool/uspp_tool.exe`. Client machines do not
 need Python when that executable is present. To build it yourself on Windows:

@@ -1,5 +1,42 @@
 # Batch conversion
 
+Use `--timings DIR` with `pack` or `batch-pack` to measure where time is spent.
+Each file produces a JSON report and a live `.events.jsonl` file in that directory.
+Reports include wall time, CPU time, dataset reads, archive writes, finalization, verification, publishing, and peak memory on Windows.
+Timing spans are nested. Do not add parent and child times together.
+The probes do not change compression settings or archive contents.
+
+```powershell
+uspp_tool pack "A:\Projects\Body.spp" --compress --timings "A:\Profiles"
+```
+
+For implementation comparisons, run the developer benchmark from the repository root:
+
+```powershell
+.venv\Scripts\python.exe scripts/benchmark_pipeline.py "A:\Projects\Body.usppz" --directory "A:\Profiles\pipeline" --repeats 2
+.venv\Scripts\python.exe scripts/benchmark_pipeline.py "A:\Projects\Body.usppz" --directory "A:\Profiles\pipeline" --follow-up --repeats 2
+```
+
+The first command requires a new output directory. It prepares a verified payload corpus, then compares encoder threads,
+buffering, file input, Deflate, decoder threads, and full-verification output handling.
+The second command reuses that corpus to test combined candidates and decoder read buffers.
+Each run uses a fresh process. Repacked archives receive full verification and a SHA-256 check of every member.
+Results include JSON summaries, CPU profiles, wall time, and peak memory. Candidate changes apply only to benchmark processes.
+These warm-cache payload tests exclude source `.spp` extraction and batch-worker throughput. Benchmark archives retain the original
+metadata for member-by-member comparison; their actual encoder settings are recorded in the results.
+
+The Windows installer adds two actions to the `.spp` right-click menu:
+`Convert to Universal Substance Painter` creates a `.uspp` archive.
+`Convert to Universal Substance Painter Compressed` creates a `.usppz` archive with LZMA2 compression.
+Both actions keep the source and save the archive beside it. Existing archives are kept and reported as errors.
+Two additional actions, **Replace original with Universal Substance Painter** and **Replace original with Universal Substance Painter Compressed**,
+fully verify the new archive, then move the original `.spp` to the Recycle Bin.
+If a destination archive already exists, these replacement actions move it to the Recycle Bin as well.
+A progress window shows the current stage and elapsed time.
+The window shows error details if conversion fails. Select **Open folder** after a successful conversion to locate the archive.
+On Windows 11, select **Show more options** to find these actions.
+The uninstaller removes both actions.
+
 A worker processes one project at a time in a separate process.
 Use `--workers N` to pack and compress several files at once:
 
@@ -46,6 +83,15 @@ If inputs overlap, the command processes each source once. The first input deter
 The CLI writes `.uspp` by default. This format uses ZIP with Deflate level 1.
 Use `--compress` to write `.usppz` archives in a 7z container with LZMA2 compression.
 The recommended configuration uses preset 6 with extreme mode off.
+Fast LZMA2 now encodes the project data. The 7z container and existing archive readers remain compatible.
+Plain LZMA2 data also uses the native multithreaded decoder during reading and verification.
+py7zr still checks member checksums and validates project references. Other codec chains use their existing readers.
+The decoder uses up to eight threads and caps its parallel buffers at 1 GiB per active archive;
+dictionary, cache, and Python buffers use additional memory. It falls back to one thread if the parallel buffer limit is reached.
+The portable executable includes the native library and its license.
+Automatic compression uses up to 24 threads and double buffering. Batch workers share the available CPU-thread budget.
+Completed in-memory member buffers are released as soon as they have been written.
+Full verification retains metadata and discards checked payload bytes, while still checking every member CRC.
 Each project gets its own solid stream, which shares compression history between archive members.
 The executable includes the Python library for 7z. You do not need to install 7-Zip.
 
@@ -70,7 +116,7 @@ The command rejects `--compress` with an explicit `.uspp` output.
 ```
 
 The Painter plugin continues to request `.uspp` files, so its existing save workflow keeps the ZIP format.
-Use the CLI to inspect or rebuild `.usppz` files. The plugin does not add `.usppz` dialogs or file associations.
+The plugin opens `.usppz` files through its file dialog and Windows file associations.
 The existing `--uspp` argument accepts both formats:
 
 ```powershell
@@ -119,7 +165,13 @@ The CLI prints the selected preset and overrides before it processes files.
   --advanced-config "preset=9,extreme=true,dict_size=256MiB,nice_len=273,mf=bt4"
 ```
 
-These properties use the Python LZMA encoder. They are not raw 7-Zip command-line switches.
+The CLI reports the selected encoder. Fast LZMA2 archive metadata records its version, effective dictionary size, and thread count.
+Fast LZMA2 uses its own preset table. Preset `0` selects its fastest level, `1`; presets `1` through `9` keep their level numbers.
+Extreme mode selects its high-compression table. Preset numbers do not promise identical output between different encoder implementations.
+`mode`, `mf`, and `depth` select the original liblzma encoder because Fast LZMA2 cannot preserve those controls.
+Dictionaries below 1 MiB or above 1 GiB, and `nice_len` below `6`, also use liblzma.
+This fallback is printed explicitly and keeps existing advanced configurations valid.
+Explicit multi-threading is rejected for configurations that require liblzma.
 Larger dictionaries and extreme mode can increase memory use and compression time.
 Compression gains depend on the project data. Start with the recommended preset before you compare custom configurations.
 
@@ -127,6 +179,7 @@ Compression gains depend on the project data. Start with the recommended preset 
 | --- | --- | --- |
 | `preset` | Integer `0` through `9` | `6` |
 | `extreme` | `true` or `false` | `false` |
+| `threads` | Integer `0` through `64`; `0` selects automatic thread budgeting | `0` |
 | `dict_size` | Integer bytes, or an integer with `KiB`, `MiB`, or `GiB`; 4 KiB through 1536 MiB | From the preset |
 | `mode` | `fast`, `normal` | From the preset |
 | `mf` | `hc3`, `hc4`, `bt2`, `bt3`, `bt4` | From the preset |
@@ -167,9 +220,18 @@ Remove `--dry-run` to perform the conversion.
 
 ## Delete sources after conversion
 
+`--overwrite` and `--delete-source` both use the Recycle Bin for disposal.
+With `--overwrite`, the command verifies the new archive, recycles the old output archive, and saves the new archive at the same path.
+With `--delete-source`, the command recycles the original `.spp` only after the new archive is verified and saved.
+Use both flags to recycle both old files. The new archive stays beside the source or in the selected output folder.
+If the old output cannot be recycled, the command keeps both old files and reports an error.
+If saving fails after the old output was recycled, the source stays in place and the old output remains recoverable from the Recycle Bin.
+
 The command keeps all source files by default.
 If you want to delete each source after conversion, add `--delete-source`.
-This option permanently deletes the source `.spp`. It does not use the Recycle Bin.
+This option moves the source `.spp` to the Recycle Bin. It never falls back to permanent deletion.
+If recycling fails, the command keeps the source and archive, reports the error, and continues.
+Disk space is reclaimed only after you empty the Recycle Bin.
 
 ```powershell
 .\uspp_tool.exe batch-pack "A:\Projects" -r --delete-source
