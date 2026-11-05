@@ -19,9 +19,9 @@ def build(compiler=None):
         raise RuntimeError(f'C compiler not found: {compiler}. Install GCC or the Xcode command line tools.')
     output = ROOT / 'bin' / library_filename()
     output.parent.mkdir(exist_ok=True)
-    flags = ['-O3', '-DNDEBUG', '-DFL2_DLL_EXPORT=1']
+    flags = ['-O3', '-DNDEBUG']
     if sys.platform == 'win32':
-        flags += ['-shared', '-static-libgcc']
+        flags += ['-DFL2_DLL_EXPORT=1', '-shared', '-static-libgcc']
     elif sys.platform == 'darwin':
         flags += ['-fPIC', '-pthread', '-dynamiclib', '-Wl,-install_name,@rpath/' + output.name]
     else:
