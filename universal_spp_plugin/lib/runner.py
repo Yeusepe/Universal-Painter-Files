@@ -76,11 +76,17 @@ def ensure_association(painter_exe):
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as k:
             if winreg.QueryValueEx(k, "")[0] == cmd:
-                return False
+                complete = True
+                for extension in ('.uspp', '.usppz'):
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, 'Software\\Classes\\' + extension) as ext_key:
+                        complete = complete and winreg.QueryValueEx(ext_key, '')[0] == 'USPP.Project'
+                if complete:
+                    return False
     except OSError:
         pass
-    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\.uspp") as k:
-        winreg.SetValue(k, "", winreg.REG_SZ, "USPP.Project")
+    for extension in ('.uspp', '.usppz'):
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, 'Software\\Classes\\' + extension) as k:
+            winreg.SetValue(k, "", winreg.REG_SZ, "USPP.Project")
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\USPP.Project") as k:
         winreg.SetValue(k, "", winreg.REG_SZ, "Universal Substance Painter Project")
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key) as k:

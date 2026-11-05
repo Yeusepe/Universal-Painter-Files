@@ -7,7 +7,7 @@ converter executable.
 The plugin keeps the UI small on purpose:
 
 - **Save as Universal...** packs the current saved `.spp` into a `.uspp`.
-- **Open Universal...** opens a `.uspp` or a regular `.spp`. If you choose a
+- **Open Universal...** opens a `.uspp`, `.usppz`, or regular `.spp`. If you choose a
   `.spp`, the plugin automatically packs it into a temporary `.uspp` before it
   plans the conversion for the running Painter version, shows any lossy
   downgrade warning, builds a temporary `.spp`, and opens that copy.
@@ -75,10 +75,10 @@ They are skipped during raster capture because they have no mesh to render.
 Capture failures on texture sets still assigned to the mesh continue to stop
 the export and report the missing pixels.
 
-### Open a `.uspp` or `.spp`
+### Open a `.uspp`, `.usppz`, or `.spp`
 
 1. Choose **Universal > Open Universal...**.
-2. Pick a `.uspp` or a regular `.spp`.
+2. Pick a `.uspp`, `.usppz`, or regular `.spp`.
 3. Review the warning if the target conversion is lossy.
 4. Confirm the conversion.
 
@@ -89,7 +89,7 @@ for a plan, and builds a temporary `.spp` in the system temp directory under
 the opened `.spp`, using a source-based name such as
 `MyProject - Universal v10.spp`. Painter then opens that real user-chosen path,
 so `Ctrl+S`, File > Save, and close prompts do not save back into the temp cache.
-The source `.uspp` or `.spp` is not modified.
+The source `.uspp`, `.usppz`, or `.spp` is not modified.
 
 If the `.uspp` was authored in an older version than the one you are running,
 the converter rebuilds the stored project and lets Painter perform its normal
@@ -191,12 +191,12 @@ scene cannot be exported until it has been saved once.
 
 ### Double-Click Support
 
-On Windows, the plugin tries to register a per-user `.uspp` file association in
+On Windows, the plugin tries to register per-user `.uspp` and `.usppz` file associations in
 `HKCU\Software\Classes`. The command is the currently running Painter executable
 with the `.uspp` path as its first argument.
 
 When Painter starts from a double-click, the plugin waits until the GUI is ready,
-reads `QApplication.arguments()`, finds the `.uspp` path, and opens it through
+reads `QApplication.arguments()`, finds the `.uspp` or `.usppz` path, and opens it through
 the same `_open_path()` flow used by the menu.
 
 This is best effort. It does not require admin rights. If registration is

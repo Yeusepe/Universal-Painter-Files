@@ -418,7 +418,7 @@ def _launch_uspp_arg():
     except Exception:
         args = []
     for a in args[1:]:
-        if a and a.lower().endswith(".uspp") and os.path.exists(a):
+        if a and a.lower().endswith((".uspp", ".usppz")) and os.path.exists(a):
             return a
     return None
 
@@ -486,6 +486,9 @@ def _open_path(src):
             if not ok:
                 dialogs.error(f"Could not inspect the project.\n{err}")
                 return
+
+            if not src.lower().endswith(".spp"):
+                source_for_name = plan.get("source_file") or source_for_name
 
             if not plan.get("supported"):
                 dialogs.error(

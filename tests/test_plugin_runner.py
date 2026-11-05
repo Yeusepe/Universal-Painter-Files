@@ -18,6 +18,34 @@ def load_runner():
 
 
 class PluginRunnerTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'nt', 'Windows file associations')
+    def test_association_adds_usppz_to_existing_uspp_install(self):
+        import contextlib
+        import types
+        runner = load_runner()
+        painter = os.path.normpath('C:/Painter/Painter.exe')
+        command_key = r'Software\Classes\USPP.Project\shell\open\command'
+        values = {command_key: f'"{painter}" "%1"',
+                  r'Software\Classes\.uspp': 'USPP.Project'}
+
+        def open_key(root, key):
+            if key not in values:
+                raise FileNotFoundError(key)
+            return contextlib.nullcontext(key)
+
+        registry = types.SimpleNamespace(
+            HKEY_CURRENT_USER=1, REG_SZ=1, OpenKey=open_key,
+            CreateKey=lambda root, key: contextlib.nullcontext(key),
+            QueryValueEx=lambda key, name: (values[key], 1),
+            SetValue=lambda key, name, kind, value: values.__setitem__(key, value),
+        )
+        with mock.patch.dict(sys.modules, winreg=registry), \
+             mock.patch.object(runner.os.path, 'exists', return_value=True), \
+             mock.patch.object(runner, '_spp_icon', return_value=None):
+            self.assertTrue(runner.ensure_association(painter))
+            self.assertEqual(values[r'Software\Classes\.usppz'], 'USPP.Project')
+            self.assertFalse(runner.ensure_association(painter))
+
     def test_plan_args_support_event_driven_execution(self):
         runner = load_runner()
         with mock.patch.dict(os.environ, {"USPP_TOOL": "C:/tools/uspp_tool.exe"}):
