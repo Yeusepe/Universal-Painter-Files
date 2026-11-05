@@ -8,6 +8,18 @@ using System.Runtime.InteropServices;
 
 class Setup {
     const string Key = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\UniversalSPP";
+    const string ShellKey = @"Software\Classes\SystemFileAssociations\.spp\shell\";
+    [DllImport("shell32.dll")] static extern void SHChangeNotify(uint e, uint f, IntPtr a, IntPtr b);
+    static void RegisterConversion(string target, string verb, string label, bool compressed, bool replaceOriginal = false) {
+        string launcher = Path.Combine(target, "UniversalSPP-Convert.exe");
+        using (RegistryKey key = Registry.CurrentUser.CreateSubKey(ShellKey + verb)) {
+            key.SetValue("", label);
+            key.SetValue("Icon", "\"" + Path.Combine(target, "uspp_tool.exe") + "\",0");
+            key.SetValue("MultiSelectModel", "Single");
+            using (RegistryKey command = key.CreateSubKey("command"))
+                command.SetValue("", "\"" + launcher + "\" " + (compressed ? "--compress " : "") + (replaceOriginal ? "--replace-original " : "") + "\"%1\"");
+        }
+    }
     [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
     static extern IntPtr SendMessageTimeout(IntPtr h, uint m, UIntPtr w, string l, uint f, uint t, out UIntPtr r);
     [STAThread] static int Main(string[] args) {
@@ -30,6 +42,14 @@ class Setup {
             }
             string source = Path.Combine(stage, "uspp_tool");
             if (!File.Exists(Path.Combine(source, "uspp_tool.exe"))) throw new Exception("Converter missing from installer.");
+            string installedExe = Path.Combine(target, "uspp_tool.exe");
+            if (File.Exists(installedExe)) {
+                try {
+                    using (var check = new FileStream(installedExe, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
+                } catch (IOException) {
+                    throw new IOException("Universal SPP is running. Finish or cancel the active batch, then run this installer again.");
+                }
+            }
             Directory.CreateDirectory(target);
             var files = Directory.GetFiles(source, "*", SearchOption.AllDirectories);
             var manifest = new System.Collections.Generic.List<string>();
@@ -59,6 +79,11 @@ class Setup {
                 key.SetValue("UninstallString", "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"" + Path.Combine(target, "uninstall.ps1") + "\"");
                 key.SetValue("NoModify", 1); key.SetValue("NoRepair", 1);
             }
+            RegisterConversion(target, "UniversalSPP", "Convert to Universal Substance Painter", false);
+            RegisterConversion(target, "UniversalSPPCompressed", "Convert to Universal Substance Painter Compressed", true);
+            RegisterConversion(target, "UniversalSPPReplace", "Replace original with Universal Substance Painter", false, true);
+            RegisterConversion(target, "UniversalSPPCompressedReplace", "Replace original with Universal Substance Painter Compressed", true, true);
+            SHChangeNotify(0x08000000, 0, IntPtr.Zero, IntPtr.Zero);
             UIntPtr result;
             SendMessageTimeout(new IntPtr(0xffff), 0x1a, UIntPtr.Zero, "Environment", 2, 5000, out result);
             if (!silent) MessageBox.Show("Installation complete.\n\nOpen a new terminal and run: uspp_tool --help\n\nYou can uninstall from Windows Settings > Apps.", "Universal SPP Setup");

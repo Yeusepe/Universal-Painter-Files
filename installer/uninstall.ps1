@@ -4,6 +4,10 @@ $expected = Join-Path $env:LOCALAPPDATA 'Programs\UniversalSPP'
 if ([IO.Path]::GetFullPath($target) -ne [IO.Path]::GetFullPath($expected)) {
     throw 'Uninstaller must run from the UniversalSPP install folder.'
 }
+foreach ($verb in @('UniversalSPP', 'UniversalSPPCompressed', 'UniversalSPPReplace', 'UniversalSPPCompressedReplace')) {
+    $menu = 'HKCU:\Software\Classes\SystemFileAssociations\.spp\shell\' + $verb
+    if (Test-Path -LiteralPath $menu) { Remove-Item -LiteralPath $menu -Recurse -Force }
+}
 if (Test-Path -LiteralPath (Join-Path $target '.path-added')) {
     $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
     try {
