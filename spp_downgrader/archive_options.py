@@ -7,7 +7,7 @@ from lib.project_archive import CompressionSettings
 
 _INTEGER_LIMITS = {
     'preset': (0, 9), 'nice_len': (2, 273), 'depth': (0, 0xFFFFFFFF),
-    'lc': (0, 4), 'lp': (0, 4), 'pb': (0, 4),
+    'lc': (0, 4), 'lp': (0, 4), 'pb': (0, 4), 'threads': (0, 64),
 }
 _CHOICES = {'mode': {'fast', 'normal'}, 'mf': {'hc3', 'hc4', 'bt2', 'bt3', 'bt4'}}
 _KEYS = set(_INTEGER_LIMITS) | set(_CHOICES) | {'extreme', 'dict_size'}
@@ -72,8 +72,12 @@ def resolve_compression(method=None, output=None, advanced_config=None):
     if advanced_config is not None and method != 'lzma2':
         raise ValueError('--advanced-config requires LZMA2 compression and .usppz output')
     values = parse_advanced_config(advanced_config) if advanced_config is not None else {}
-    return CompressionSettings(method, preset=values.pop('preset', 6),
-                               extreme=values.pop('extreme', False), overrides=tuple(sorted(values.items())))
+    settings = CompressionSettings(method, preset=values.pop('preset', 6),
+                                   extreme=values.pop('extreme', False), threads=values.pop('threads', 0),
+                                   overrides=tuple(sorted(values.items())))
+    if settings.encoder == 'liblzma' and settings.threads > 1:
+        raise ValueError('threads > 1 requires Fast LZMA2-compatible settings; mode, mf, depth and out-of-range dictionary sizes use liblzma')
+    return settings
 
 
 def describe_compression(settings):
@@ -81,4 +85,7 @@ def describe_compression(settings):
         return 'Compression: Deflate level 1 (.uspp, ZIP)'
     options = [f'preset={settings.preset}', f'extreme={str(settings.extreme).lower()}']
     options.extend(f'{key}={value}' for key, value in settings.overrides)
+    options.append(f'encoder={settings.encoder}')
+    threads = (settings.threads or 'auto') if settings.encoder == 'fast-lzma2' else 1
+    options.append(f'threads={threads}')
     return 'Compression: LZMA2 (.usppz, 7z), ' + ', '.join(options)

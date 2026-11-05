@@ -6,11 +6,14 @@ The engine defaults to ZIP. CLI callers choose compression before creating paths
 from contextlib import nullcontext
 from dataclasses import dataclass
 import json
+import io
 import lzma
+import os
 from pathlib import Path
 import stat
 import tempfile
 import zipfile
+from lib.performance import span
 
 
 PROJECT_METADATA_MEMBERS = ('manifest.json', 'metadata.json', 'structure.json',
@@ -23,6 +26,22 @@ class CompressionSettings:
     preset: int = 6
     extreme: bool = False
     overrides: tuple = ()
+    threads: int = 0
+
+    @property
+    def encoder(self):
+        options = dict(self.overrides)
+        if any(key in options for key in ('mode', 'mf', 'depth')):
+            return 'liblzma'
+        if not 1024**2 <= options.get('dict_size', 16 * 1024**2) <= 1024**3:
+            return 'liblzma'
+        if not 6 <= options.get('nice_len', 48) <= 273:
+            return 'liblzma'
+        return 'fast-lzma2'
+
+    @property
+    def effective_threads(self):
+        return self.threads or min(24, os.cpu_count() or 1)
 
     @property
     def extension(self):
@@ -32,7 +51,8 @@ class CompressionSettings:
         if self.method == 'deflate':
             return {'container': 'zip', 'method': 'deflate', 'level': 1}
         return {'container': '7z', 'method': 'lzma2', 'preset': self.preset,
-                'extreme': self.extreme, 'overrides': dict(self.overrides)}
+                'extreme': self.extreme, 'overrides': dict(self.overrides),
+                'encoder': self.encoder, 'threads': self.effective_threads if self.encoder == 'fast-lzma2' else 1}
 
     def filters(self):
         options = dict(self.overrides)
@@ -58,11 +78,19 @@ class ArchiveWriter:
     def __init__(self, path, settings=None):
         self.settings = settings or CompressionSettings()
         self._names = set()
+        self._encoder = None
         if self.settings.method == 'deflate':
             self._archive = zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED, compresslevel=1)
         elif self.settings.method == 'lzma2':
             import py7zr
             self._archive = py7zr.SevenZipFile(path, 'w', filters=self.settings.filters())
+            if self.settings.encoder == 'fast-lzma2':
+                from lib.fast_lzma2 import install_encoder
+                try:
+                    self._encoder = install_encoder(self._archive, self.settings)
+                except BaseException:
+                    self._archive.close()
+                    raise
         else:
             raise ValueError(f'unknown compression method: {self.settings.method}')
 
@@ -70,7 +98,18 @@ class ArchiveWriter:
         return self
 
     def __exit__(self, *exc):
-        self._archive.close()
+        try:
+            with span('archive.finalize', method=self.settings.method):
+                self._archive.close()
+        finally:
+            if self._encoder is not None:
+                self._encoder.close()
+
+    def compression_metadata(self):
+        result = self.settings.metadata()
+        if self._encoder is not None:
+            result.update(self._encoder.info)
+        return result
 
     def _claim(self, name):
         key = _member_key(name)
@@ -80,23 +119,33 @@ class ArchiveWriter:
 
     def writestr(self, name, data):
         self._claim(name)
-        if self.settings.method == 'deflate':
-            self._archive.writestr(name, data)
-        else:
-            self._archive.writestr(data, name)
+        size = len(data.encode('utf-8')) if isinstance(data, str) else len(data)
+        with span('archive.write_member', member=name, bytes=size):
+            if self.settings.method == 'deflate':
+                self._archive.writestr(name, data)
+            else:
+                self._archive.writestr(data, name)
+                # py7zr has finished consuming this member, but otherwise retains
+                # its entire BytesIO payload until the archive is closed.
+                self._archive.header.files_info.files[-1]['data'].close()
 
     def write(self, filename, arcname):
         self._claim(arcname)
-        self._archive.write(filename, arcname)
+        with span('archive.write_file', member=arcname, bytes=Path(filename).stat().st_size):
+            self._archive.write(filename, arcname)
 
 
 class ArchiveReader:
-    def __init__(self, path, members=None):
+    def __init__(self, path, members=None, verification_only=False):
         self.path = Path(path)
         self._cache = None
         self._cached_files = None
         self._members = members
         self._all_crcs = False
+        self._decoders = []
+        self._verification_only = verification_only
+        self._verified_all = False
+        self._metadata_cache = None
         with self.path.open('rb') as source:
             signature = source.read(6)
         if signature == b"7z\xbc\xaf\x27\x1c":
@@ -149,6 +198,8 @@ class ArchiveReader:
         try:
             self._archive.close()
         finally:
+            for decoder in self._decoders:
+                decoder.close()
             if self._cache is not None:
                 # All files under this directory have tool-controlled numeric names.
                 if Path(self._cache.name).resolve() != self._cache_root:
@@ -168,6 +219,14 @@ class ArchiveReader:
             methods = sorted({labels.get(info.compress_type, str(info.compress_type))
                               for info in self._archive.infolist() if not info.is_dir()})
         return {'container': self.container, 'methods': methods}
+
+    def _reset_decoder(self):
+        for decoder in self._decoders:
+            decoder.close()
+        self._decoders = []
+        self._archive.reset()
+        from lib.fast_lzma2 import install_decoders
+        self._decoders = install_decoders(self._archive)
 
     def _extract_cache(self):
         from py7zr.io import Py7zIO, WriterFactory
@@ -213,14 +272,68 @@ class ArchiveReader:
 
         factory = DiskFactory()
         try:
-            self._archive.reset()
-            self._archive.extract(targets=sorted(selected), factory=factory)
+            self._reset_decoder()
+            with span('archive.read_cache', selected_members=len(selected), total_members=len(self._files)):
+                self._archive.extract(targets=sorted(selected), factory=factory)
         finally:
             for output in factory.outputs:
                 output.close()
         if any(not path.is_file() for path in paths.values()):
             raise ValueError('archive extraction did not produce all requested members')
         self._cached_files = paths
+
+    def _verify_stream(self):
+        """Check every member CRC while retaining only project metadata."""
+        from py7zr.io import Py7zIO, WriterFactory
+
+        class Sink(Py7zIO):
+            def __init__(self, keep):
+                self.buffer = io.BytesIO() if keep else None
+                self.length = 0
+
+            def write(self, data):
+                self.length += len(data)
+                return self.buffer.write(data) if self.buffer is not None else len(data)
+
+            def read(self, size=None):
+                return self.buffer.read(-1 if size is None else size) if self.buffer is not None else b''
+
+            def seek(self, offset, whence=0):
+                if self.buffer is not None:
+                    return self.buffer.seek(offset, whence)
+                if offset == 0 and whence == 0:
+                    return 0
+                raise ValueError('Unexpected seek in verification sink')
+
+            def flush(self):
+                pass
+
+            def size(self):
+                return self.length
+
+        class Factory(WriterFactory):
+            def __init__(self):
+                self.outputs = {}
+
+            def create(self, filename):
+                output = Sink(filename in PROJECT_METADATA_MEMBERS)
+                self.outputs[filename] = output
+                return output
+
+        factory = Factory()
+        try:
+            self._reset_decoder()
+            with span('archive.verify_stream', total_members=len(self._files)):
+                self._archive.extract(factory=factory)
+            if set(factory.outputs) != self._files:
+                raise ValueError('archive verification did not cover every member')
+            self._metadata_cache = {name: output.buffer.getvalue()
+                                    for name, output in factory.outputs.items() if output.buffer is not None}
+            self._verified_all = True
+        finally:
+            for output in factory.outputs.values():
+                if output.buffer is not None:
+                    output.buffer.close()
 
     def read(self, name):
         if name not in self._files:
@@ -229,24 +342,32 @@ class ArchiveReader:
             return self._archive.read(name)
         if self._members is not None and name not in self._members:
             raise KeyError(f'member was not selected for this read: {name}')
+        if self._verification_only and self._members is None and self._all_crcs:
+            if name not in PROJECT_METADATA_MEMBERS:
+                raise KeyError(f'payload is not retained during verification: {name}')
+            if self._metadata_cache is None:
+                self._verify_stream()
+            return self._metadata_cache[name]
         if self._cached_files is None:
             self._extract_cache()
         return self._cached_files[name].read_bytes()
 
     def testzip(self):
+        if self._verified_all:
+            return None
         if self.container == 'zip':
             return self._archive.testzip()
         # A complete factory extraction already checked every member CRC.
         if self._members is None and self._cached_files is not None and self._all_crcs:
             return None
-        self._archive.reset()
+        self._reset_decoder()
         return self._archive.testzip()
 
 
-def open_archive(source, members=None):
+def open_archive(source, members=None, verification_only=False):
     if isinstance(source, ArchiveReader):
         return nullcontext(source)
-    return ArchiveReader(source, members=members)
+    return ArchiveReader(source, members=members, verification_only=verification_only)
 
 
 def verify_project_archive(archive, full=False):

@@ -54,7 +54,7 @@ class ArchiveOptionsTests(unittest.TestCase):
                    'dict_size=2GiB', 'dict_size=1GB', 'dict_size=0.5GiB',
                    'mode=ultra', 'mf=wrong', 'nice_len=1', 'nice_len=274',
                    'depth=-1', 'depth=4294967296', 'lc=5', 'lp=5', 'pb=5',
-                   'lc=3,lp=2', 'lp=2', 'extreme=yes', 'threads=8', 'solid=256MiB', 'blocksize=4096')
+                   'lc=3,lp=2', 'lp=2', 'extreme=yes', 'threads=65', 'solid=256MiB', 'blocksize=4096')
         with mock.patch('lzma.LZMACompressor') as compressor:
             for text in invalid:
                 with self.subTest(text=text), self.assertRaises(ValueError):

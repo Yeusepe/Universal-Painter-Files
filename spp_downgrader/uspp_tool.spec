@@ -22,13 +22,16 @@ datas = [
 ]
 # Retain version, source, and license metadata for the required 7z backend and its dependencies.
 datas += copy_metadata("py7zr", recursive=True)
+datas += copy_metadata("Send2Trash")
+datas += copy_metadata("pywin32")
 # auto-generated per-version schemas/defaults (v8.1_schema.json, v9_defaults.json, ...)
 for fn in os.listdir(LIB):
     if fn.endswith(("_schema.json", "_defaults.json")):
         datas.append((os.path.join(LIB, fn), "profiles"))
 
-# h5py's HDF5 runtime DLLs (the top packaging risk — collect explicitly).
+# Collect h5py's HDF5 runtime DLLs explicitly.
 binaries = collect_dynamic_libs("h5py")
+binaries.append((os.path.join(ROOT, '..', 'native', 'bin', 'fast-lzma2.dll'), 'native'))
 
 a = Analysis(
     ["uspp_tool.py"],
@@ -38,7 +41,7 @@ a = Analysis(
     hiddenimports=["h5py", "h5py.defs", "h5py.utils", "h5py._proxy", "h5py.h5ac",
                    "numpy", "mmh3", "yaml", "lzma", "py7zr", "py7zr.io",
                    "archive_options", "lib.project_archive", "lz4", "lz4.block", "lz4._version",
-                   "pyspng", "pyspng._pyspng_c",
+                   "pyspng", "pyspng._pyspng_c", "send2trash.win.modern",
                    "lib.migration_profile", "lib.hbo_decode",
                    "lib.lossiness", "lib.raster_manifest", "lib.config_manager", "lib.type_code_mapper",
                    "lib.hbo_parser", "hbo_encoder", "spp_builder",

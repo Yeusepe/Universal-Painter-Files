@@ -6,12 +6,14 @@
 # build MUST run from inside spp_downgrader/ — the Push-Location below guarantees it.
 param(
     [switch]$CliOnly,
-    [string]$Python = "python"
+    [string]$Python = "python",
+    [string]$NativeCompiler = 'C:\msys64\ucrt64\bin\gcc.exe'
 )
 
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 $pythonExe = (Get-Command $Python -CommandType Application -ErrorAction Stop).Source
+& (Join-Path $root 'native\build.ps1') -Compiler $NativeCompiler
 Push-Location (Join-Path $root "spp_downgrader")
 try {
     # `python -m PyInstaller` works whether or not the console script is on PATH.
@@ -21,6 +23,7 @@ try {
     $exe = Join-Path $dist "uspp_tool.exe"
     if (-not (Test-Path -LiteralPath $exe)) { throw "build failed: $exe not found" }
     Copy-Item -LiteralPath (Join-Path $root "LICENSE"), (Join-Path $root "NOTICE.md"), (Join-Path $root "CLI.md") -Destination $dist -Force
+    Copy-Item -LiteralPath (Join-Path $root 'native\THIRD_PARTY_NOTICES.txt') -Destination (Join-Path $dist 'Fast-LZMA2-LICENSE.txt') -Force
     $archive = Join-Path $root "spp_downgrader\dist\uspp_tool-windows-x64.zip"
     Compress-Archive -LiteralPath $dist -DestinationPath $archive -Force
     Write-Host "CLI -> $archive"

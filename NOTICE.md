@@ -57,6 +57,12 @@ sample files, fixtures, textures, meshes, fonts, materials, screenshots, or
 other assets unless they are original to the contributor or included under a
 license that permits redistribution in this repository.
 
+## Fast LZMA2
+
+Fast LZMA2 is included under its BSD license. Copyright 2018-present Conor McCarthy.
+The pinned upstream source and license are in `native/fast-lzma2/`, with provenance in `native/PROVENANCE.md`.
+Binary distributions include `Fast-LZMA2-LICENSE.txt`.
+
 ## File conversion risk
 
 Universal SPP modifies copies of project files at the binary level. Conversion
