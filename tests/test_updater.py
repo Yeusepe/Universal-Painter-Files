@@ -4,6 +4,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 import zipfile
 
 
@@ -55,7 +56,8 @@ class ReleaseParsingTests(unittest.TestCase):
                 }
             ],
         }
-        info = updater.update_info_from_release(release)
+        with mock.patch.object(updater.platform, "system", return_value="Windows"), mock.patch.object(updater.platform, "machine", return_value="AMD64"):
+            info = updater.update_info_from_release(release)
         self.assertEqual(info.version, "0.1.8")
         self.assertEqual(info.asset_name, "universal_spp_plugin-0.1.8.zip")
         self.assertEqual(info.sha256, sha.lower())

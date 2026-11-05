@@ -319,7 +319,7 @@ def _capture_raster_js(plan_path, manifest_path, raster_settings):
         executable = version.running_binary()
         if not executable:
             raise RuntimeError("Could not locate the running Painter executable for raster capture.")
-        with legacy_uv_export.temporary_guard_bypass(executable):
+        with legacy_uv_export.temporary_guard_bypass(executable, required=(os.name == "nt")):
             result = _raster_js_call(
                 "capture({}, {}, {}, {});".format(
                     json.dumps(_js_path(plan_path)),
@@ -451,7 +451,7 @@ def _open_launch_if_gui_up():
 
 def on_open():
     if not runner.available():
-        dialogs.error("Converter not found.\nExpected bin/uspp_tool/uspp_tool.exe beside the plugin.")
+        dialogs.error(runner.missing_tool_message())
         return
     uspp = dialogs.open_uspp()
     if uspp:
@@ -462,7 +462,7 @@ def _open_path(src):
     with _busy_operation():
         try:
             if not runner.available():
-                dialogs.error("Converter not found.\nExpected bin/uspp_tool/uspp_tool.exe beside the plugin.")
+                dialogs.error(runner.missing_tool_message())
                 return
             if src.lower().endswith(".spp"):
                 source_for_name = src
@@ -545,7 +545,7 @@ def on_save():
     with _busy_operation():
         try:
             if not runner.available():
-                dialogs.error("Converter not found.\nExpected bin/uspp_tool/uspp_tool.exe beside the plugin.")
+                dialogs.error(runner.missing_tool_message())
                 return
             if not sp_project.is_open():
                 dialogs.error("Open a project first.")

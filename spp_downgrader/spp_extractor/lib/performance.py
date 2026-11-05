@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import sys
 import time
 import uuid
 
@@ -15,7 +16,9 @@ _active = ContextVar('uspp_performance', default=None)
 
 def memory():
     if os.name != 'nt':
-        return {}
+        import resource
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        return {'peak_rss_bytes': int(peak if sys.platform == 'darwin' else peak * 1024)}
     import ctypes
     from ctypes import wintypes
 

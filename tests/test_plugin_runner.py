@@ -59,15 +59,15 @@ class PluginRunnerTests(unittest.TestCase):
 
     def test_tool_path_prefers_onedir_and_falls_back_to_legacy_onefile(self):
         runner = load_runner()
-        onedir = os.path.join(runner._PLUGIN_ROOT, "bin", "uspp_tool", "uspp_tool.exe")
-        legacy = os.path.join(runner._PLUGIN_ROOT, "bin", "uspp_tool.exe")
+        onedir = os.path.join(runner._PLUGIN_ROOT, "bin", "uspp_tool", runner.tool_filename())
+        legacy = os.path.join(runner._PLUGIN_ROOT, "bin", runner.tool_filename())
 
         with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
-            runner.os.path, "exists", side_effect=lambda path: path == onedir
+            runner.os.path, "isfile", side_effect=lambda path: path == onedir
         ):
             self.assertEqual(runner.tool_path(), onedir)
         with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
-            runner.os.path, "exists", side_effect=lambda path: path == legacy
+            runner.os.path, "isfile", side_effect=lambda path: path == legacy
         ):
             self.assertEqual(runner.tool_path(), legacy)
 

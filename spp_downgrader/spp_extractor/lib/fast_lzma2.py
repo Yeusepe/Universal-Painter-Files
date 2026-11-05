@@ -20,12 +20,13 @@ FAST_LENGTH, LC, LP, PB, OMIT_PROPERTIES, XXHASH = 10, 13, 14, 15, 16, 17
 
 @lru_cache(maxsize=1)
 def library():
+    filename = library_filename()
     if getattr(sys, 'frozen', False):
-        path = Path(sys._MEIPASS) / 'native' / 'fast-lzma2.dll'
+        path = Path(sys._MEIPASS) / 'native' / filename
     else:
-        path = Path(__file__).resolve().parents[3] / 'native/bin/fast-lzma2.dll'
+        path = Path(__file__).resolve().parents[3] / 'native' / 'bin' / filename
     if not path.is_file():
-        raise RuntimeError('Fast LZMA2 library is missing. Build native/build.ps1 or reinstall the portable bundle.')
+        raise RuntimeError('Fast LZMA2 library is missing. Run python native/build.py or reinstall the portable bundle.')
     dll = C.CDLL(str(path))
     signatures = {
         'FL2_versionNumber': (C.c_uint, []),
@@ -53,6 +54,17 @@ def library():
     if dll.FL2_versionNumber() != 10001:
         raise RuntimeError('Unsupported Fast LZMA2 ABI; rebuild the pinned native dependency.')
     return dll
+
+
+def library_filename(platform=None):
+    platform = platform or sys.platform
+    if platform == 'win32':
+        return 'fast-lzma2.dll'
+    if platform == 'darwin':
+        return 'libfast-lzma2.dylib'
+    if platform.startswith('linux'):
+        return 'libfast-lzma2.so'
+    raise RuntimeError(f'Unsupported native compression platform: {platform}')
 
 
 class FastLzma2Encoder:
