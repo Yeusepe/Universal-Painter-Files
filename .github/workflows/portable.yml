@@ -1,0 +1,54 @@
+name: Portable CLI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unix:
+    name: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            platform: linux-x64
+          - runner: macos-15
+            platform: macos-arm64
+          - runner: macos-15-intel
+            platform: macos-x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Build native compression library
+        run: python native/build.py
+      - name: Test source
+        run: |
+          python -m unittest discover -s tests -q
+          node --test tests/raster_capture.test.js
+      - name: Build CLI and plugin bundles
+        run: python build.py
+      - name: Test extracted portable archive
+        run: python tests/portable_smoke.py spp_downgrader/dist/uspp_tool-${{ matrix.platform }}.tar.gz --native-trash --plugin spp_downgrader/dist/universal_spp_plugin-*-${{ matrix.platform }}.zip
+      - name: Upload native bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: uspp-${{ matrix.platform }}
+          path: |
+            spp_downgrader/dist/uspp_tool-${{ matrix.platform }}.tar.gz
+            spp_downgrader/dist/universal_spp_plugin-*-${{ matrix.platform }}.zip
+          if-no-files-found: error
