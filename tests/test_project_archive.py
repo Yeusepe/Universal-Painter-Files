@@ -61,6 +61,27 @@ class ProjectArchiveTests(unittest.TestCase):
                     for name in ('projectsettings.ini', 'paint/payload.bin'):
                         self.assertEqual(bytes(actual[name][()]), bytes(expected[name][()]))
 
+    def test_openpbr_warning_survives_main_merge_for_both_containers(self):
+        from lib.shader_compat import OPENPBR_LOSS
+        source = self.project()
+        with h5py.File(source, 'a') as project:
+            project.create_dataset('resources/material.shader',
+                data=np.frombuffer(b'import lib-openpbr-test.glsl\n', dtype='u1'))
+        for method in ('deflate', 'lzma2'):
+            with self.subTest(method=method):
+                path = self.root / ('shader' + CompressionSettings(method).extension)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(uspp_tool.cmd_pack(argparse.Namespace(
+                        input=str(source), output=str(path), verbose=False,
+                        compression_settings=CompressionSettings(method))), 0)
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(uspp_tool.cmd_plan(argparse.Namespace(
+                        uspp=str(path), target='10')), 0)
+                plan = json.loads(output.getvalue())
+                self.assertIn(OPENPBR_LOSS, plan['lost_features'])
+                self.assertTrue(plan['lossy'])
+
     def test_info_extracts_only_metadata_and_reports_actual_container(self):
         _, path = self.pack('lzma2')
         original = py7zr.SevenZipFile.extract

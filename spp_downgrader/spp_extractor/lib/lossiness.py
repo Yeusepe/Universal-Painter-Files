@@ -4,6 +4,7 @@ statements about what data/features are lost when converting to an older version
 Only GENUINELY lossy categories are reported:
   - blacklist        : types/fields dropped entirely (data removed)
   - field_retype     : a primitive whose width shrank (conditional precision loss)
+  - codec           : color profiles reset by the legacy inline writer
 Faithful transforms (type/field renames, field_rekind object<->array,
 field_value_transform enum<->bitmask) preserve the data and are NOT reported.
 
@@ -76,5 +77,7 @@ def build_lossiness_report(profile, messages=None):
         add("blacklist", entry)
     for key in profile.field_retype:
         add("field_retype", key)
+    if profile.data.get("target_format", "inline") != "registry":
+        add("codec", "legacy_color_management")
 
     return sorted(out)

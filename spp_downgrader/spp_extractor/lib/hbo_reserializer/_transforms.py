@@ -1052,6 +1052,11 @@ class TransformMixin:
                             self._set_field(fields, name, cm_tc, ("object", ("", None)))
                         else:
                             self._set_field(fields, name, cm_tc, ("object_null", b""))
+                # The profiles are gone; keeping OCIO/ACE selected dereferences a null config on open.
+                workflow = self._get_field(fields, "colorManagementWorkflow")
+                workflow_tc = self._get_member_type(obj_name, "colorManagementWorkflow") or (workflow[1] if workflow else 9)
+                self._set_field(fields, "colorManagementWorkflow", workflow_tc,
+                                ("primitive", workflow_tc, self._pack_primitive(workflow_tc, 0)))
 
         if obj_name == "DataStackActions":
             actions_field = self._get_field(fields, "actions")
