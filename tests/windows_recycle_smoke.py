@@ -36,6 +36,7 @@ def main():
     case = BatchPackTests()
     case.setUp()
     expected = {}
+    verified_originals = set()
     try:
         def run(*args):
             result = subprocess.run([exe, *map(str, args)], capture_output=True,
@@ -88,12 +89,14 @@ def main():
             assert original in expected
             assert digest(payload) == expected[original], str(original)
             verified.append((payload, metadata))
+            verified_originals.add(original)
         # All exact paths and bytes are verified before removing test-only entries.
         for payload, metadata in verified:
             payload.unlink()
             metadata.unlink()
         print(f'Verified {len(verified)} complete recycled files; removed all native-test debris.')
         case.doCleanups()
+    assert verified_originals == set(expected), f'Missing recycled files: {set(expected) - verified_originals}'
 
 
 if __name__ == '__main__':

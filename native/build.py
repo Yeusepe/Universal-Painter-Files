@@ -1,6 +1,7 @@
 """Build the pinned Fast LZMA2 library for the current operating system."""
 import argparse
 import os
+import platform
 from pathlib import Path
 import shutil
 import subprocess
@@ -23,11 +24,19 @@ def build(compiler=None):
     if sys.platform == 'win32':
         flags += ['-DFL2_DLL_EXPORT=1', '-shared', '-static-libgcc']
     elif sys.platform == 'darwin':
-        flags += ['-fPIC', '-pthread', '-dynamiclib', '-Wl,-install_name,@rpath/' + output.name]
+        machine = platform.machine().lower()
+        architecture = {'x86_64': 'x86_64', 'amd64': 'x86_64', 'arm64': 'arm64', 'aarch64': 'arm64'}.get(machine)
+        if not architecture:
+            raise RuntimeError(f'Unsupported macOS Python architecture: {machine}')
+        flags += ['-arch', architecture, '-fPIC', '-pthread', '-dynamiclib', '-Wl,-install_name,@rpath/' + output.name]
     else:
         flags += ['-fPIC', '-pthread', '-shared', '-Wl,-soname,' + output.name]
     subprocess.run([executable, *flags, *map(str, sorted((ROOT / 'fast-lzma2').glob('*.c'))),
                     '-o', str(output)], check=True)
+    if sys.platform == 'darwin':
+        architectures = subprocess.run(['lipo', '-archs', str(output)], check=True, capture_output=True, text=True).stdout.split()
+        if architecture not in architectures:
+            raise RuntimeError(f'Built library architecture {architectures} does not match Python architecture {architecture}')
     print(output)
     return output
 

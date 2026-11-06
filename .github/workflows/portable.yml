@@ -9,6 +9,21 @@ permissions:
   contents: read
 
 jobs:
+  installer-transaction:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test installer upgrade and rollback
+        shell: pwsh
+        run: |
+          $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          $output = Join-Path $env:RUNNER_TEMP 'uspp-installer-test.exe'
+          & $compiler /nologo /target:exe /main:InstallerTransaction /reference:System.Windows.Forms.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll "/out:$output" installer\Setup.cs tests\InstallerTransaction.cs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $output
+          exit $LASTEXITCODE
   unix:
     name: ${{ matrix.platform }}
     strategy:
@@ -25,6 +40,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
@@ -42,6 +59,18 @@ jobs:
           python -m pip install -r requirements-dev.txt
       - name: Build native compression library
         run: python native/build.py
+      - name: Check Rosetta native library architecture
+        if: matrix.platform == 'macos-arm64'
+        shell: bash
+        run: |
+          if arch -x86_64 /usr/bin/python3 -c 'import platform; assert platform.machine() == "x86_64"' 2>/dev/null; then
+            arch -x86_64 /usr/bin/python3 native/build.py
+            lipo -archs native/bin/libfast-lzma2.dylib | grep -w x86_64
+            python native/build.py
+            lipo -archs native/bin/libfast-lzma2.dylib | grep -w arm64
+          else
+            echo 'Rosetta Python is unavailable on this runner; architecture checks use native runners.'
+          fi
       - name: Test source
         run: |
           python -m unittest discover -s tests -q

@@ -15,6 +15,7 @@ import uspp_tool
 def test_recycle(source):
     root = Path(os.environ['USPP_TEST_TRASH_ROOT']).resolve()
     source = Path(source).absolute()
+    source = source.parent.resolve() / source.name
     if root not in source.parents:
         raise RuntimeError('Test disposal outside the fixture directory is forbidden')
     trash = root / '.test-trash'
