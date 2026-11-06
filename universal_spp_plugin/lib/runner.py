@@ -1,11 +1,17 @@
-"""Locate and invoke the bundled uspp_tool.exe. Pure (no substance_painter / PySide),
+"""Locate and invoke the bundled converter. Pure (no substance_painter / PySide),
 so it is unit-testable headless. Data crosses the boundary as files + one JSON blob."""
 import os
 import sys
 import subprocess
+import re
+import shutil
 
 _PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _CREATE_NO_WINDOW = 0x08000000  # Windows: don't flash a console for the child
+
+
+def tool_filename():
+    return 'uspp_tool.exe' if sys.platform == 'win32' else 'uspp_tool'
 
 
 def tool_path():
@@ -19,15 +25,32 @@ def tool_path():
     if override:
         return override
     candidates = (
-        os.path.join(_PLUGIN_ROOT, "bin", "uspp_tool", "uspp_tool.exe"),
-        os.path.join(_PLUGIN_ROOT, "bin", "uspp_tool.exe"),
+        os.path.join(_PLUGIN_ROOT, "bin", "uspp_tool", tool_filename()),
+        os.path.join(_PLUGIN_ROOT, "bin", tool_filename()),
     )
-    return next((path for path in candidates if os.path.exists(path)), candidates[0])
+    return next((path for path in candidates if os.path.isfile(path)), candidates[0])
+
+
+def _python_command():
+    """Find a configured Python executable without treating Painter as Python."""
+    configured = os.environ.get('USPP_PYTHON')
+    if configured:
+        return shutil.which(configured)
+    current = sys.executable or ''
+    if re.fullmatch(r'python(?:w|\d+(?:\.\d+)*)?(?:\.exe)?', os.path.basename(current), re.IGNORECASE):
+        return current if os.path.isfile(current) else None
+    return None
 
 
 def _argv(*args):
     tp = tool_path()
-    head = [sys.executable, tp] if tp.lower().endswith(".py") else [tp]
+    if tp.lower().endswith('.py'):
+        python = _python_command()
+        if not python:
+            raise RuntimeError('Set USPP_PYTHON to a Python interpreter for the source converter.')
+        head = [python, tp]
+    else:
+        head = [tp]
     return head + list(args)
 
 
@@ -44,7 +67,16 @@ def _run(*args, capture=True, env_extra=None):
 
 
 def available():
-    return os.path.exists(tool_path())
+    path = tool_path()
+    if not os.path.isfile(path):
+        return False
+    if path.lower().endswith('.py'):
+        return bool(_python_command())
+    return os.name == 'nt' or os.access(path, os.X_OK)
+
+
+def missing_tool_message():
+    return f'Converter not found or not executable.\nExpected {tool_path()}\nFor a .py converter, set USPP_PYTHON to a Python interpreter.'
 
 
 def _spp_icon(winreg):
@@ -76,11 +108,17 @@ def ensure_association(painter_exe):
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as k:
             if winreg.QueryValueEx(k, "")[0] == cmd:
-                return False
+                complete = True
+                for extension in ('.uspp', '.usppz'):
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, 'Software\\Classes\\' + extension) as ext_key:
+                        complete = complete and winreg.QueryValueEx(ext_key, '')[0] == 'USPP.Project'
+                if complete:
+                    return False
     except OSError:
         pass
-    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\.uspp") as k:
-        winreg.SetValue(k, "", winreg.REG_SZ, "USPP.Project")
+    for extension in ('.uspp', '.usppz'):
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, 'Software\\Classes\\' + extension) as k:
+            winreg.SetValue(k, "", winreg.REG_SZ, "USPP.Project")
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\USPP.Project") as k:
         winreg.SetValue(k, "", winreg.REG_SZ, "Universal Substance Painter Project")
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key) as k:

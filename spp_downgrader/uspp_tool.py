@@ -17,9 +17,18 @@ Direction (S = .uspp created version, T = target/running version):
 import os
 import sys
 import json
-import zipfile
 import argparse
 import struct
+import tempfile
+import io
+import multiprocessing
+import signal
+import errno
+import shutil
+from dataclasses import replace
+from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED
+from pathlib import Path
+from contextlib import nullcontext, redirect_stdout, redirect_stderr
 
 TOOL_VERSION = "1.0.0"
 FORMAT_VERSION = 2
@@ -27,6 +36,10 @@ FORMAT_VERSION = 2
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, "spp_extractor"))
 sys.path.insert(0, os.path.join(_HERE, "spp_builder"))
+
+from lib.project_archive import CompressionSettings, PROJECT_METADATA_MEMBERS, open_archive, verify_project_archive
+from archive_options import describe_compression, resolve_compression
+from lib.performance import profiled_pack, span
 
 # When frozen by PyInstaller, point the engine at the bundled profiles dir.
 if getattr(sys, "frozen", False):
@@ -53,7 +66,7 @@ def _vkey(label):
 # ---------------------------------------------------------------------- manifest
 
 def load_manifest(uspp_path):
-    with zipfile.ZipFile(uspp_path) as z:
+    with open_archive(uspp_path, members=('manifest.json', 'metadata.json')) as z:
         manifest = json.loads(z.read("manifest.json"))
         try:
             meta = json.loads(z.read("metadata.json"))
@@ -63,7 +76,7 @@ def load_manifest(uspp_path):
 
 
 def load_raster_manifest(uspp_path):
-    with zipfile.ZipFile(uspp_path) as z:
+    with open_archive(uspp_path) as z:
         from lib.raster_manifest import load_from_zip
         return load_from_zip(z)
 
@@ -168,12 +181,14 @@ def _hbo_raster_requests(raw, dataset_path, s_label, t_label):
 
 def _raster_requests_from_uspp(uspp_path, s_label, t_label):
     out = []
-    with zipfile.ZipFile(uspp_path) as z:
+    with open_archive(uspp_path) as z:
         try:
             datasets = json.loads(z.read("datasets.json").decode("utf-8"))
         except Exception:
             return out
         for path, info in datasets.items():
+            if path not in ("paint/document.bin", "paint/default_material.bin"):
+                continue
             if not info.get("is_hbo"):
                 continue
             data_file = info.get("data_file")
@@ -226,12 +241,431 @@ def _targets_for_raster_plan(source_label, targets_arg):
 
 # ------------------------------------------------------------------- subcommands
 
+def _batch_inputs(args):
+    """Discover before writing; the first input owns each duplicate source path."""
+    jobs = {}
+    errors = []
+    output_dir = Path(args.output_dir).resolve() if args.output_dir else None
+    settings = getattr(args, 'compression_settings', None) or CompressionSettings()
+
+    def add(source, relative):
+        destination = (output_dir / relative if output_dir else source).with_suffix(settings.extension)
+        jobs.setdefault(source.resolve(), (source, destination))
+
+    def walk_error(error):
+        errors.append((error.filename or 'folder', str(error)))
+
+    for value in args.inputs:
+        try:
+            path = Path(os.path.abspath(value))
+            path.stat()  # Report inaccessible or missing inputs instead of silently ignoring them.
+            if path.is_file():
+                if path.suffix.lower() != '.spp':
+                    raise ValueError('input file must have the .spp extension')
+                add(path, Path(path.name))
+            elif path.is_dir():
+                found = False
+                for folder, directories, files in os.walk(path, onerror=walk_error, followlinks=False):
+                    directories[:] = sorted(
+                        (name for name in directories
+                         if not os.path.islink(os.path.join(folder, name))
+                         and not getattr(os.path, 'isjunction', lambda p: False)(os.path.join(folder, name))),
+                        key=str.casefold,
+                    ) if args.recursive else []
+                    for name in sorted(files, key=str.casefold):
+                        if Path(name).suffix.lower() == '.spp':
+                            source = Path(folder) / name
+                            try:
+                                add(source, source.relative_to(path))
+                                found = True
+                            except (OSError, RuntimeError) as error:
+                                errors.append((str(source), str(error)))
+                if not found:
+                    errors.append((value, 'no .spp files found'))
+            else:
+                raise ValueError('input must be a file or folder')
+        except (OSError, ValueError, RuntimeError) as error:
+            errors.append((value, str(error)))
+    return list(jobs.values()), errors
+
+
+def _source_identity(source):
+    info = source.stat()
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
+
+
+def _check_batch_output(destination, overwrite):
+    if os.path.lexists(destination) and destination.is_dir():
+        raise IsADirectoryError(f'output is a directory: {destination}')
+    if not overwrite and os.path.lexists(destination):
+        raise FileExistsError(f'output exists: {destination}. Use --overwrite to replace it')
+
+
+def _recycle_source(source):
+    """Use the native trash backend. Never fall back to permanent deletion."""
+    if os.name == 'nt':
+        # Refuse any operation that Windows cannot send to the Recycle Bin.
+        import pythoncom
+        from win32com.shell import shell, shellcon
+        from win32com.server.exception import COMException
+        from send2trash.win.IFileOperationProgressSink import FileOperationProgressSink
+
+        class RecycleOnlySink(FileOperationProgressSink):
+            def PreDeleteItem(self, flags, item):
+                if not flags & shellcon.TSF_DELETE_RECYCLE_IF_POSSIBLE:
+                    raise COMException('Windows cannot recycle this source', scode=-2147467260)
+
+        pythoncom.CoInitialize()
+        try:
+            operation = pythoncom.CoCreateInstance(
+                shell.CLSID_FileOperation, None, pythoncom.CLSCTX_ALL, shell.IID_IFileOperation)
+            operation.SetOperationFlags(
+                shellcon.FOF_NOCONFIRMATION | shellcon.FOF_NOERRORUI | shellcon.FOF_SILENT
+                | shellcon.FOFX_EARLYFAILURE | 0x00080000 | 0x20000000)
+            # FOFX_RECYCLEONDELETE | FOFX_ADDUNDORECORD (Windows 8+).
+            sink = pythoncom.WrapObject(RecycleOnlySink(), shell.IID_IFileOperationProgressSink)
+            item = shell.SHCreateItemFromParsingName(str(source.absolute()), None, shell.IID_IShellItem)
+            operation.DeleteItem(item, sink)
+            result = operation.PerformOperations()
+            if result or operation.GetAnyOperationsAborted():
+                raise OSError('Windows did not move the source to the Recycle Bin')
+        except (pythoncom.com_error, COMException) as error:
+            raise OSError(f'Could not move the source to the Recycle Bin: {error}') from error
+        finally:
+            pythoncom.CoUninitialize()
+        return
+    else:
+        from send2trash import send2trash
+    send2trash(str(source.absolute()))
+
+
+@profiled_pack
+def _batch_pack_one(source, destination, args):
+    """Publish complete archives, then optionally remove the unchanged source."""
+    temporary = None
+    try:
+        if source.resolve() == destination.resolve():
+            raise ValueError(f'output points to a source project: {destination}')
+        _check_batch_output(destination, args.overwrite)
+        previous_output = destination.lstat() if args.overwrite and os.path.lexists(destination) else None
+        identity = _source_identity(source) if args.delete_source else None
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            dir=destination.parent, prefix=f'.{destination.name}.', suffix='.tmp', delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+        pack_args = argparse.Namespace(
+            input=str(source), output=str(temporary), verbose=args.verbose,
+            compression_settings=getattr(args, 'compression_settings', None),
+            raster_capture_dir=getattr(args, 'raster_capture_dir', None),
+            raster_budget_mb=getattr(args, 'raster_budget_mb', None),
+        )
+        with open(os.devnull, 'w', encoding='utf-8') as quiet:
+            with nullcontext() if args.verbose or os.environ.get('USPP_PROGRESS') else redirect_stdout(quiet):
+                rc = cmd_pack(pack_args)
+        if rc:
+            raise RuntimeError(f'packer returned exit code {rc}')
+        from spp_extractor import emit_progress
+        emit_progress(-1, 'Verifying archive...')
+        members = None if args.delete_source or previous_output is not None else PROJECT_METADATA_MEMBERS
+        with span('pack.verify', full=args.delete_source or previous_output is not None):
+            with open_archive(temporary, members=members, verification_only=True) as archive:
+                verify_project_archive(archive, full=args.delete_source)
+                if previous_output is not None and not args.delete_source:
+                    bad_member = archive.testzip()
+                    if bad_member:
+                        raise ValueError(f'archive integrity check failed: {bad_member}')
+        if args.delete_source or previous_output is not None:
+            if args.delete_source and _source_identity(source) != identity:
+                raise RuntimeError('source changed during conversion; source was kept')
+            with temporary.open('r+b') as archive_file:
+                os.fsync(archive_file.fileno())
+        emit_progress(-1, 'Saving archive...')
+        if previous_output is not None:
+            current = destination.lstat()
+            fields = ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns')
+            if any(getattr(current, field) != getattr(previous_output, field) for field in fields):
+                raise RuntimeError('output changed during conversion; previous archive was kept')
+            _recycle_source(destination)
+            if os.path.lexists(destination):
+                raise RuntimeError('previous archive was not moved to the Recycle Bin; source was kept')
+            print(f'RECYCLED previous archive -> {destination}', flush=True)
+        try:
+            with span('pack.publish'):
+                _publish_archive(temporary, destination)
+        except OSError as error:
+            recovery = temporary
+            temporary = None
+            if previous_output is not None:
+                raise RuntimeError(f'could not save the new archive; previous archive is in the Recycle Bin and source was kept. Verified archive: {recovery}: {error}') from error
+            raise RuntimeError(f'could not save the new archive; verified archive: {recovery}: {error}') from error
+        if args.delete_source:
+            try:
+                if _source_identity(source) != identity:
+                    raise RuntimeError('source changed during conversion')
+                _recycle_source(source)
+                if os.path.lexists(source):
+                    raise RuntimeError('source still exists after recycling')
+            except (OSError, RuntimeError) as error:
+                raise RuntimeError(f'archive saved to {destination}, but source was not moved to the Recycle Bin: {error}') from error
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _publish_archive(temporary, destination):
+    if os.name == 'nt':
+        # rename() cannot overwrite a file created after recycling the previous output.
+        os.rename(temporary, destination)
+    else:
+        _publish_posix(temporary, destination)
+
+
+def _rename_noreplace(temporary, destination):
+    """Use the platform's atomic exclusive rename when available."""
+    import ctypes
+    libc = ctypes.CDLL(None, use_errno=True)
+    if sys.platform.startswith('linux'):
+        function = getattr(libc, 'renameat2', None)
+        arguments = (-100, os.fsencode(temporary), -100, os.fsencode(destination), 1)
+        types = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
+    elif sys.platform == 'darwin':
+        function = getattr(libc, 'renamex_np', None)
+        arguments = (os.fsencode(temporary), os.fsencode(destination), 4)
+        types = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint)
+    else:
+        return False
+    if function is None:
+        return False
+    function.argtypes, function.restype = types, ctypes.c_int
+    if function(*arguments) == 0:
+        return True
+    code = ctypes.get_errno()
+    if code in (errno.ENOSYS, errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP):
+        return False
+    raise OSError(code, os.strerror(code), str(destination))
+
+
+def _publish_posix(temporary, destination):
+    if _rename_noreplace(temporary, destination):
+        return
+    try:
+        os.link(temporary, destination)
+        return
+    except OSError as error:
+        if error.errno not in (errno.EPERM, errno.ENOSYS, errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EXDEV):
+            raise
+    # Some filesystems support neither exclusive rename nor hard links. Reserve
+    # the destination without replacing another file, then copy the verified
+    # archive. Keep the temporary file until the copy has completed.
+    fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_BINARY', 0), 0o600)
+    identity = os.fstat(fd)
+    try:
+        with os.fdopen(fd, 'wb') as output, temporary.open('rb') as source:
+            shutil.copyfileobj(source, output, length=1024 * 1024)
+            output.flush()
+            os.fsync(output.fileno())
+    except BaseException:
+        try:
+            current = destination.lstat()
+            if (current.st_dev, current.st_ino) == (identity.st_dev, identity.st_ino):
+                destination.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def _worker_init():
+    # The parent handles cancellation; active archives finish safely.
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+
+def _batch_worker(source, destination, args):
+    output = io.StringIO()
+    try:
+        with redirect_stdout(output), redirect_stderr(output):
+            _batch_pack_one(source, destination, args)
+        return None, output.getvalue()
+    except Exception as error:
+        if args.verbose:
+            import traceback
+            traceback.print_exc(file=output)
+        return str(error), output.getvalue()
+
+
+def _positive_workers(value):
+    number = int(value)
+    if number < 1 or number > 61:
+        raise argparse.ArgumentTypeError('workers must be between 1 and 61')
+    return number
+
+
+def _parallel_batch(jobs, args, report):
+    """Bound queued work to the worker count; parent owns all console output."""
+    succeeded = 0
+    iterator = iter(jobs)
+    pending = {}
+    pool = ProcessPoolExecutor(max_workers=min(args.workers, len(jobs)),
+                               mp_context=multiprocessing.get_context('spawn'),
+                               initializer=_worker_init)
+
+    def submit():
+        job = next(iterator, None)
+        if job is not None:
+            index, source, destination = job
+            print(f'[{index}] START {source}', flush=True)
+            pending[pool.submit(_batch_worker, source, destination, args)] = (source, destination)
+
+    try:
+        for _ in range(min(args.workers, len(jobs))):
+            submit()
+        while pending:
+            done, _ = wait(pending, return_when=FIRST_COMPLETED)
+            for future in done:
+                source, destination = pending.pop(future)
+                try:
+                    error, output = future.result()
+                    if output and args.verbose:
+                        print(f'--- {source} ---\n{output}', flush=True)
+                    if error is not None:
+                        report(source, error)
+                    else:
+                        succeeded += 1
+                        print(f'OK -> {destination}' + (' (source moved to Recycle Bin)' if args.delete_source else ''), flush=True)
+                except Exception as error:
+                    report(source, error)
+                submit()
+    except KeyboardInterrupt:
+        print('Cancellation requested. Waiting for active files to finish.', file=sys.stderr, flush=True)
+        # Do not start more files. Include completed in-flight results in totals.
+        for future, (source, destination) in pending.items():
+            if future.cancel():
+                continue
+            try:
+                error, _ = future.result()
+                if error is None:
+                    succeeded += 1
+                    print(f'OK -> {destination}' + (' (source moved to Recycle Bin)' if args.delete_source else ''), flush=True)
+                else:
+                    report(source, error)
+            except Exception as error:
+                report(source, error)
+        return succeeded, True
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
+    return succeeded, False
+
+
+def cmd_batch_pack(args):
+    succeeded = planned = failed = 0
+    label = 'Dry run' if args.dry_run else 'Batch'
+
+    def totals():
+        count = f'{planned} planned' if args.dry_run else f'{succeeded} succeeded'
+        return f'{count}, {failed} failed'
+
+    def report(source, error):
+        nonlocal failed
+        failed += 1
+        print(f'FAILED {source}: {error}', file=sys.stderr, flush=True)
+
+    try:
+        jobs, errors = _batch_inputs(args)
+        for source, error in errors:
+            report(source, error)
+        if not jobs:
+            print(f'{label} complete: {totals()}. No matching .spp files.')
+            return 2
+
+        destinations = {}
+        invalid = {}
+        sources = set()
+        for source, _ in jobs:
+            try:
+                sources.add(source.resolve())
+            except (OSError, RuntimeError) as error:
+                invalid[source] = str(error)
+        for source, destination in jobs:
+            try:
+                key = destination.resolve()
+                if key in sources:
+                    invalid[source] = f'output points to a source project: {destination}'
+                destinations.setdefault(key, []).append(source)
+            except (OSError, RuntimeError) as error:
+                invalid[source] = str(error)
+        for destination, owners in destinations.items():
+            if len(owners) > 1:
+                for source in owners:
+                    invalid[source] = f'multiple sources map to output: {destination}'
+
+        if not args.dry_run and getattr(args, 'workers', 1) > 1:
+            ready = []
+            for index, (source, destination) in enumerate(jobs, 1):
+                if source in invalid:
+                    report(source, invalid[source])
+                else:
+                    ready.append((index, source, destination))
+            if ready:
+                settings = getattr(args, 'compression_settings', None)
+                if settings is not None and settings.method == 'lzma2' and not settings.threads:
+                    budget = max(1, (os.cpu_count() or 1) // min(args.workers, len(ready)))
+                    args.compression_settings = replace(settings, threads=min(24, budget))
+                print(f'Workers: {min(args.workers, len(ready))}', flush=True)
+                succeeded, cancelled = _parallel_batch(ready, args, report)
+                if cancelled:
+                    print(f'{label} cancelled: {totals()}.', file=sys.stderr)
+                    return 130
+            print(f'{label} complete: {totals()}.')
+            return 1 if failed else 0
+
+        for index, (source, destination) in enumerate(jobs, 1):
+            print(f'[{index}/{len(jobs)}] {source}', flush=True)
+            try:
+                if source in invalid:
+                    raise ValueError(invalid[source])
+                if args.dry_run:
+                    _check_batch_output(destination, args.overwrite)
+                    action = 'REPLACE' if os.path.lexists(destination) else 'PACK'
+                    print(f'WOULD {action} -> {destination}', flush=True)
+                    if action == 'REPLACE':
+                        print(f'WOULD RECYCLE -> {destination} (existing archive, after successful conversion)', flush=True)
+                    if args.delete_source:
+                        print(f'WOULD RECYCLE -> {source} (after successful conversion)', flush=True)
+                    planned += 1
+                    continue
+                _batch_pack_one(source, destination, args)
+                succeeded += 1
+                print(f'OK -> {destination}' + (' (source moved to Recycle Bin)' if args.delete_source else ''), flush=True)
+            except Exception as error:
+                report(source, error)
+                if args.verbose:
+                    import traceback
+                    traceback.print_exc()
+    except KeyboardInterrupt:
+        print(f'{label} cancelled: {totals()}.', file=sys.stderr)
+        return 130
+    except (OSError, ValueError, RuntimeError) as error:
+        report('batch inputs', error)
+        print(f'{label} complete: {totals()}.')
+        return 2
+    print(f'{label} complete: {totals()}.')
+    return 1 if failed else 0
+
+
 def cmd_pack(args):
+    if getattr(args, 'publish_output', False):
+        publish_args = argparse.Namespace(**vars(args))
+        publish_args.overwrite = True  # Retain the existing single-file pack replacement behavior.
+        publish_args.delete_source = False
+        _batch_pack_one(Path(args.input), Path(args.output), publish_args)
+        print(f'packed -> {args.output}', flush=True)
+        return 0
     from spp_extractor import SPPExtractor, emit_progress
-    emit_progress(-1, "Reading project…")
+    emit_progress(-1, "Reading project...")
     ex = SPPExtractor(args.input, verbose=args.verbose)
-    extraction = ex.extract(decode_hbo=False, skip_texture_cache=True)
-    emit_progress(0.10, "Compressing project…")
+    with span('pack.extract'):
+        extraction = ex.extract(decode_hbo=False, skip_texture_cache=True)
+    emit_progress(0.10, "Compressing project...")
     cv = extraction.metadata.get("painter_version") or {}
     created = dict(cv) if cv.get("major") is not None else None
     extra = {
@@ -243,6 +677,13 @@ def cmd_pack(args):
     if created:
         extra["supported_versions"] = compute_supported_versions(ver_label(created["major"], created["minor"]))
         print(f"Detected Painter v{source_revision_of(extra, extraction.metadata)}")
+    with span('pack.write'):
+        _save_pack_archive(ex, extraction, args, extra)
+    print(f"packed -> {args.output}")
+    return 0
+
+
+def _save_pack_archive(ex, extraction, args, extra):
     ex.save_as_uspp(
         extraction,
         args.output,
@@ -252,9 +693,9 @@ def cmd_pack(args):
             int(args.raster_budget_mb) * 1024 * 1024
             if getattr(args, "raster_budget_mb", None) is not None else None
         ),
+        compression=(getattr(args, 'compression_settings', None) or
+                     CompressionSettings('lzma2' if str(args.output).lower().endswith('.usppz') else 'deflate')),
     )
-    print(f"packed -> {args.output}")
-    return 0
 
 
 def cmd_convert(args):
@@ -277,6 +718,8 @@ def cmd_convert(args):
             raster_capture_dir=getattr(args, "raster_capture_dir", None),
             raster_budget_mb=getattr(args, "raster_budget_mb", None),
             verbose=args.verbose,
+            compression_settings=(resolve_compression(output=keep) if keep else CompressionSettings()),
+            publish_output=bool(keep),
         )
         rc = cmd_pack(pack_ns)
         if rc != 0:
@@ -298,21 +741,31 @@ def cmd_convert(args):
 
 
 def cmd_info(args):
-    manifest, meta = load_manifest(args.uspp)
+    with open_archive(args.uspp, members=('manifest.json', 'metadata.json')) as archive:
+        manifest, meta = load_manifest(archive)
+        compression = archive.compression_info()
+    compression['configuration'] = manifest.get('compression')
     cv = created_version_of(manifest, meta)
     print(json.dumps({
         "created_version": ver_label(*cv) if cv else None,
         "source_revision": source_revision_of(manifest, meta),
+        "source_file": manifest.get("source_file"),
         "supported_versions": manifest.get("supported_versions"),
         "format_version": manifest.get("format_version"),
         "tool_version": manifest.get("tool_version"),
         "source_file": manifest.get("source_file"),
+        "compression": compression,
     }, indent=2))
     return 0
 
 
 def cmd_plan(args):
-    manifest, meta = load_manifest(args.uspp)
+    with open_archive(args.uspp, members=PROJECT_METADATA_MEMBERS) as archive:
+        return _plan_from_archive(args, archive)
+
+
+def _plan_from_archive(args, archive):
+    manifest, meta = load_manifest(archive)
     cv = created_version_of(manifest, meta)
     if not cv:
         print(json.dumps({"error": "no created_version in .uspp"}))
@@ -330,18 +783,26 @@ def cmd_plan(args):
         from lib.raster_manifest import summarize
         profile = mp.load(f"v{s_label}_to_v{t_label}")
         lost = build_lossiness_report(profile)
+        try:
+            datasets = json.loads(archive.read('datasets.json'))
+        except (KeyError, ValueError):
+            if parse_ver(t_label)[0] <= 10:
+                raise
+            datasets = {}
+        needed = {info.get('data_file') for path, info in datasets.items()
+                  if (path in ('paint/document.bin', 'paint/default_material.bin') and info.get('is_hbo'))
+                  or (parse_ver(t_label)[0] <= 10 and path.endswith('.shader') and '/.alg_meta/' not in path)}
+        archive.select_members(needed - {None, ''})
         if parse_ver(t_label)[0] <= 10:
             from lib.shader_compat import OPENPBR_LOSS, uses_openpbr
-            with zipfile.ZipFile(args.uspp) as zf:
-                datasets = json.loads(zf.read('datasets.json'))
-                for path in datasets:
-                    if path.endswith('.shader') and '/.alg_meta/' not in path:
-                        payload = 'data/' + path.replace('/', '_').replace('\\', '_') + '.bin'
-                        if payload in zf.namelist() and uses_openpbr(zf.read(payload)):
-                            lost.append(OPENPBR_LOSS)
-                            break
-        raster_requests = _raster_requests_from_uspp(args.uspp, s_label, t_label)
-        raster_summary = summarize(load_raster_manifest(args.uspp), raster_requests)
+            for path, info in datasets.items():
+                if path.endswith('.shader') and '/.alg_meta/' not in path:
+                    payload = info.get('data_file')
+                    if payload and payload in archive.namelist() and uses_openpbr(archive.read(payload)):
+                        lost.append(OPENPBR_LOSS)
+                        break
+        raster_requests = _raster_requests_from_uspp(archive, s_label, t_label)
+        raster_summary = summarize(load_raster_manifest(archive), raster_requests)
 
     result = {
         "direction": direction,
@@ -350,6 +811,7 @@ def cmd_plan(args):
         "lost_features": lost,
         "source_version": s_label,
         "source_revision": source_revision_of(manifest, meta),
+        "source_file": manifest.get("source_file"),
         "target_version": t_label,
         "tool_version": TOOL_VERSION,
     }
@@ -422,7 +884,12 @@ def cmd_raster_plan(args):
 
 
 def cmd_build(args):
-    manifest, meta = load_manifest(args.uspp)
+    with open_archive(args.uspp) as archive:
+        return _build_from_archive(args, archive)
+
+
+def _build_from_archive(args, archive):
+    manifest, meta = load_manifest(archive)
     cv = created_version_of(manifest, meta)
     if not cv:
         print("error: no created_version in .uspp", file=sys.stderr)
@@ -445,7 +912,7 @@ def cmd_build(args):
         # target, incl. minor), not the snapped format boundary.
         os.environ["SPP_TARGET_VERSION"] = t_label
         build_spp = _import_builder()
-        ok = build_spp(args.uspp, args.output, verbose=args.verbose, target_major=t_major)
+        ok = build_spp(args.uspp, args.output, verbose=args.verbose, target_major=t_major, archive=archive)
     else:
         # Exact / native-upgrade builds copy compatible streams as-is. Painter upgrades
         # on open if needed; do not infer the source major as a downgrade target.
@@ -457,6 +924,7 @@ def cmd_build(args):
             verbose=args.verbose,
             target_major=None,
             preserve_source=True,
+            archive=archive,
         )
 
     if ok:
@@ -477,12 +945,38 @@ def _import_builder():
     return build_spp
 
 
+def _add_compression_options(parser):
+    parser.add_argument('--timings', metavar='DIR',
+                        help='Write per-file JSON timing reports and live probe events to DIR')
+    parser.add_argument('--compress', action='store_true',
+                        help='Use LZMA2 compression (.usppz); default: Deflate (.uspp)')
+    parser.add_argument('--advanced-config', metavar='KEY=VALUE,...',
+                        help='LZMA2 options: preset, extreme, dict_size, threads, mode, nice_len, mf, depth, lc, lp, pb')
+
+
 def main():
+    # The plugin also decodes converter progress as UTF-8.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8', errors='backslashreplace')
     ap = argparse.ArgumentParser(description="Universal .uspp converter")
     ap.add_argument("-v", "--verbose", action="store_true")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("pack"); p.add_argument("input"); p.add_argument("-o", "--output", required=True); p.add_argument("--raster-capture-dir"); p.add_argument("--raster-budget-mb", type=int); p.set_defaults(fn=cmd_pack)
+    p = sub.add_parser("pack"); p.add_argument("input"); p.add_argument("-o", "--output"); p.add_argument("--raster-capture-dir"); p.add_argument("--raster-budget-mb", type=int); p.set_defaults(fn=cmd_pack)
+    _add_compression_options(p)
+    p = sub.add_parser('batch-pack', help='Pack .spp files and folders; report errors and continue')
+    p.add_argument('inputs', nargs='+', help='One or more .spp files or folders')
+    p.add_argument('-r', '--recursive', action='store_true', help='Include subfolders without following directory links')
+    p.add_argument('-o', '--output-dir', help='Write beneath this folder instead of beside each source')
+    p.add_argument('--overwrite', action='store_true', help='Recycle existing outputs and replace them only after packing and verification succeed')
+    p.add_argument('--delete-source', action='store_true', help='Move each source .spp to the Recycle Bin only after its archive passes integrity checks')
+    p.add_argument('--workers', type=_positive_workers, default=1, metavar='N',
+                   help='Pack and compress up to N files in separate processes (1-61; default: 1)')
+    p.add_argument('--dry-run', action='store_true', help='Preview output paths and source deletions without changing files')
+    p.add_argument('-v', '--verbose', action='store_true', default=argparse.SUPPRESS, help='Show packer details and tracebacks')
+    _add_compression_options(p)
+    p.set_defaults(fn=cmd_batch_pack)
     p = sub.add_parser("raster-plan"); p.add_argument("input"); p.add_argument("--targets", default="all-lower"); p.add_argument("-o", "--output"); p.set_defaults(fn=cmd_raster_plan)
     p = sub.add_parser("plan"); p.add_argument("--uspp", required=True); p.add_argument("--target", required=True); p.set_defaults(fn=cmd_plan)
     p = sub.add_parser("build"); p.add_argument("--uspp", required=True); p.add_argument("--target", required=True); p.add_argument("-o", "--output", required=True); p.set_defaults(fn=cmd_build)
@@ -490,8 +984,35 @@ def main():
     p = sub.add_parser("info"); p.add_argument("--uspp", required=True); p.set_defaults(fn=cmd_info)
 
     args = ap.parse_args()
-    sys.exit(args.fn(args))
+    if args.cmd == 'convert' and args.keep_uspp:
+        try:
+            resolve_compression(output=args.keep_uspp)
+        except ValueError as error:
+            ap.error(str(error))
+    if args.cmd in ('pack', 'batch-pack'):
+        try:
+            args.compression_settings = resolve_compression(
+                'lzma2' if args.compress else None, getattr(args, 'output', None), args.advanced_config)
+        except ValueError as error:
+            ap.error(str(error))
+        if args.cmd == 'pack':
+            args.output = args.output or str(Path(args.input).with_suffix(args.compression_settings.extension))
+            args.publish_output = True
+        print(describe_compression(args.compression_settings), flush=True)
+    try:
+        rc = args.fn(args)
+    except KeyboardInterrupt:
+        print('Cancelled.', file=sys.stderr)
+        rc = 130
+    except Exception as error:
+        print(f'error: {error}', file=sys.stderr)
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
+        rc = 1
+    sys.exit(rc)
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     main()

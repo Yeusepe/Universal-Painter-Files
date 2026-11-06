@@ -7,7 +7,7 @@ converter executable.
 The plugin keeps the UI small on purpose:
 
 - **Save as Universal...** packs the current saved `.spp` into a `.uspp`.
-- **Open Universal...** opens a `.uspp` or a regular `.spp`. If you choose a
+- **Open Universal...** opens a `.uspp`, `.usppz`, or regular `.spp`. If you choose a
   `.spp`, the plugin automatically packs it into a temporary `.uspp` before it
   plans the conversion for the running Painter version, shows any lossy
   downgrade warning, builds a temporary `.spp`, and opens that copy.
@@ -27,10 +27,12 @@ integration layer over `bin/uspp_tool/uspp_tool.exe`.
 ## Install
 
 1. Get the `bin/uspp_tool/` converter folder.
-   - From a release: download the release build and keep the included
-     `universal_spp_plugin/bin/uspp_tool/uspp_tool.exe`.
-   - From source: run `build.ps1` from the repository root. It builds the
-     converter and copies it into this plugin folder.
+   - From a release: download `universal_spp_plugin-<version>.zip` for Windows,
+     `universal_spp_plugin-<version>-linux-x64.zip` for Linux,
+     `universal_spp_plugin-<version>-macos-x64.zip` for Intel Mac, or
+     `universal_spp_plugin-<version>-macos-arm64.zip` for Apple Silicon.
+   - From source: run `build.ps1` on Windows or `python build.py` on Linux and
+     macOS from the repository root. This builds the converter and plugin ZIP.
 2. In Painter, open **Python > Plugins Folder**.
 3. Open the `plugins` subfolder.
 4. Copy the whole `universal_spp_plugin` folder into that `plugins` folder.
@@ -43,11 +45,20 @@ integration layer over `bin/uspp_tool/uspp_tool.exe`.
 6. Confirm the converter exists:
 
    ```text
-   python/plugins/universal_spp_plugin/bin/uspp_tool/uspp_tool.exe
+   python/plugins/universal_spp_plugin/bin/uspp_tool/uspp_tool.exe  (Windows)
+   python/plugins/universal_spp_plugin/bin/uspp_tool/uspp_tool      (Linux and macOS)
    ```
 
 7. In Painter, choose **Python > Reload Plugins Folder**, or restart Painter.
 8. In the **Python** menu, make sure `universal_spp_plugin` is enabled.
+
+On Linux and macOS, download the plugin ZIP for your OS and architecture, or run `python build.py` from the repository root.
+The bundled converter is `bin/uspp_tool/uspp_tool`, without `.exe`.
+Use **Python > Plugins Folder** to locate the correct installation folder on either system.
+If a manual extraction loses permissions, run `chmod +x bin/uspp_tool/uspp_tool` inside the plugin folder.
+The plugin updater restores this permission automatically and refuses updates for another OS or architecture.
+Windows file associations and the Explorer conversion menu are not installed on Linux or macOS.
+Legacy raster capture uses the native exporter on Linux and macOS. The Windows-only UV guard bypass is not used there.
 
 After the plugin starts, Painter shows a **Universal** menu in the menu bar. The
 plugin also tries to add **Save as Universal (.uspp)...** to Painter's **File**
@@ -75,10 +86,10 @@ They are skipped during raster capture because they have no mesh to render.
 Capture failures on texture sets still assigned to the mesh continue to stop
 the export and report the missing pixels.
 
-### Open a `.uspp` or `.spp`
+### Open a `.uspp`, `.usppz`, or `.spp`
 
 1. Choose **Universal > Open Universal...**.
-2. Pick a `.uspp` or a regular `.spp`.
+2. Pick a `.uspp`, `.usppz`, or regular `.spp`.
 3. Review the warning if the target conversion is lossy.
 4. Confirm the conversion.
 
@@ -89,7 +100,7 @@ for a plan, and builds a temporary `.spp` in the system temp directory under
 the opened `.spp`, using a source-based name such as
 `MyProject - Universal v10.spp`. Painter then opens that real user-chosen path,
 so `Ctrl+S`, File > Save, and close prompts do not save back into the temp cache.
-The source `.uspp` or `.spp` is not modified.
+The source `.uspp`, `.usppz`, or `.spp` is not modified.
 
 If the `.uspp` was authored in an older version than the one you are running,
 the converter rebuilds the stored project and lets Painter perform its normal
@@ -191,12 +202,12 @@ scene cannot be exported until it has been saved once.
 
 ### Double-Click Support
 
-On Windows, the plugin tries to register a per-user `.uspp` file association in
+On Windows, the plugin tries to register per-user `.uspp` and `.usppz` file associations in
 `HKCU\Software\Classes`. The command is the currently running Painter executable
 with the `.uspp` path as its first argument.
 
 When Painter starts from a double-click, the plugin waits until the GUI is ready,
-reads `QApplication.arguments()`, finds the `.uspp` path, and opens it through
+reads `QApplication.arguments()`, finds the `.uspp` or `.usppz` path, and opens it through
 the same `_open_path()` flow used by the menu.
 
 This is best effort. It does not require admin rights. If registration is
@@ -211,8 +222,9 @@ bundled executable:
 $env:USPP_TOOL = "C:\path\to\universal-spp\spp_downgrader\uspp_tool.py"
 ```
 
-If `USPP_TOOL` ends in `.py`, `runner.py` launches it with the current Python
-interpreter. If it points to an `.exe`, it runs that executable directly.
+If `USPP_TOOL` ends in `.py`, set `USPP_PYTHON` to a Python interpreter with the
+project dependencies installed. Painter's executable is not a Python interpreter.
+Executable tools run directly.
 
 Useful rebuild command from the repository root:
 

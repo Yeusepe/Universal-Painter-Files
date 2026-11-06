@@ -63,13 +63,17 @@ formats still need a compatible migration profile.
 
 Use this path if you want the menu inside Painter.
 
-1. Download the latest `universal_spp_plugin.zip` release from the
-   [Releases](../../releases) page.
+1. Download the plugin ZIP for your system from the [Releases](../../releases) page:
+   `universal_spp_plugin-<version>.zip` for Windows,
+   `universal_spp_plugin-<version>-linux-x64.zip` for Linux,
+   `universal_spp_plugin-<version>-macos-x64.zip` for Intel Mac, or
+   `universal_spp_plugin-<version>-macos-arm64.zip` for Apple Silicon.
 2. Open Adobe Substance 3D Painter.
 3. Go to **Python > Plugins Folder**. This opens the correct plugin directory for
    your machine, usually `Documents\Adobe\Adobe Substance 3D Painter\python\plugins`.
 4. Extract the release so the plugin root is directly inside `plugins`.
-5. Make sure `universal_spp_plugin/bin/uspp_tool/uspp_tool.exe` exists.
+5. Make sure `universal_spp_plugin/bin/uspp_tool/uspp_tool.exe` exists on Windows,
+   or `universal_spp_plugin/bin/uspp_tool/uspp_tool` on Linux and macOS.
 6. Go to **Python > Reload Plugins Folder**, or restart Painter.
 7. Enable `universal_spp_plugin` from the **Python** menu if Painter did not
    enable it automatically.
@@ -97,7 +101,7 @@ Common actions:
 
 - **Universal > Save as Universal...** exports the current saved `.spp` as a
   `.uspp`.
-- **Universal > Open Universal...** opens a `.uspp` or a regular `.spp`. If you
+- **Universal > Open Universal...** opens a `.uspp`, `.usppz`, or regular `.spp`. If you
   pick a `.spp`, the plugin first packs it into a temporary `.uspp`, then plans
   the conversion, warns about lossy downgrades, builds a temporary `.spp`, and
   opens it.
@@ -110,7 +114,7 @@ Common actions:
 More plugin detail is in
 [`universal_spp_plugin/README.md`](universal_spp_plugin/README.md).
 
-## The Two File Formats
+## Project And Archive Formats
 
 ### `.spp`
 
@@ -143,6 +147,21 @@ The archive contains:
 That makes `.uspp` the handoff format. It is not a Painter-native project file;
 it is the portable package Universal SPP can rebuild for a target version.
 
+### `.usppz`
+
+The CLI defaults to `.uspp` for automatically named archives.
+Use `--compress` to create `.usppz` archives.
+This format stores the same project members in a 7z container with LZMA2 compression.
+The recommended configuration uses preset 6 with extreme mode off.
+Fast LZMA2 provides the native encoder. The portable release bundles its Windows x64 library.
+Advanced liblzma-only configurations retain the original encoder and report that choice explicitly.
+The Painter plugin opens both `.uspp` and `.usppz` files.
+The plugin saves new archives as `.uspp` files.
+
+An explicit `.usppz` output filename also selects LZMA2.
+Use `--advanced-config` to tune LZMA2.
+See [CLI.md](CLI.md) for the available properties and examples.
+
 ## Conversion Directions
 
 Universal SPP handles three cases:
@@ -159,6 +178,13 @@ used by the converter, so the warning and the actual transform stay tied
 together.
 
 ## Use The CLI Directly
+
+For batch conversion, use `batch-pack`. It reports file errors and continues with the remaining projects.
+See [CLI.md](CLI.md) for the portable executable, output folders, and the optional `--delete-source` flag.
+
+```powershell
+python spp_downgrader\uspp_tool.py batch-pack "A:\Projects" --recursive
+```
 
 Use this path for automation, testing, or conversion without the Painter plugin.
 The CLI does not require Painter to be installed for the conversion step.
@@ -185,6 +211,10 @@ More engine detail is in
 
 ## Build From Source
 
+The Windows build also compiles the pinned Fast LZMA2 dependency with MSYS2 UCRT64 GCC.
+The default compiler is `C:\msys64\ucrt64\bin\gcc.exe`. See `native/PROVENANCE.md` for its source revision and license.
+For source-only use, run `python native/build.py` once before creating or reading compressed archives.
+
 The plugin calls `universal_spp_plugin/bin/uspp_tool/uspp_tool.exe`. Client machines do not
 need Python when that executable is present. To build it yourself on Windows:
 
@@ -204,12 +234,49 @@ one-folder bundle to:
 universal_spp_plugin/bin/uspp_tool/uspp_tool.exe
 ```
 
+## Linux and macOS
+
+Download the portable archive for your operating system and CPU architecture.
+Linux uses `uspp_tool-linux-x64.tar.gz`. macOS uses `uspp_tool-macos-x64.tar.gz` for Intel or `uspp_tool-macos-arm64.tar.gz` for Apple Silicon.
+Extract the entire archive. Keep the `uspp_tool` executable beside its `_internal` folder.
+
+```sh
+tar -xzf uspp_tool-linux-x64.tar.gz
+./uspp_tool/uspp_tool batch-pack "/home/me/Projects" -r --dry-run
+./uspp_tool/uspp_tool pack "/home/me/Projects/Body.spp" --compress
+```
+
+To build from source on either system, install Python 3.11 or newer and a C compiler.
+On Linux, install GCC or Clang and the Python development tools for your distribution.
+On macOS, install the Xcode command line tools with `xcode-select --install`.
+
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements-dev.txt
+python build.py
+```
+
+If pip builds `pyspng` from source on an Intel Mac, its bundled zlib needs an SDK compatibility flag:
+
+```sh
+CFLAGS="${CFLAGS:-} -Dfdopen=fdopen" python -m pip install -r requirements-dev.txt
+```
+
+`build.py` builds for the current operating system and Python architecture. It creates a portable CLI archive and a plugin ZIP in `spp_downgrader/dist`.
+Use `--cli-only` to skip plugin staging and packaging. Use `--compiler /path/to/cc` to select the compiler.
+The CLI tarballs preserve executable permissions and internal library links.
+Plugin ZIPs contain regular files. The plugin updater restores executable permissions and selects the matching OS and architecture.
+
+The Windows installer and Explorer context menu remain Windows-only. Linux and macOS use the portable CLI or Painter's Universal menu.
+The macOS bundles are not notarized. Live Painter integration requires testing in the installed Painter version on each system.
+
 ## Requirements
 
-- Windows.
+- Windows x64, Linux x64, or macOS on Intel or Apple Silicon.
 - Python 3.11 or newer for source use.
-- Runtime Python packages: `h5py`, `numpy`, `mmh3`, `PyYAML`.
-- Maintainer and build packages: `pyinstaller`, `py7zr`, `minidump`.
+- Runtime Python packages: `h5py`, `lz4`, `numpy`, `mmh3`, `pyspng`, `PyYAML`, `py7zr`.
+- Maintainer and build packages: `pyinstaller`, `minidump`.
 
 The plugin itself is a normal Painter Python plugin. It does not use admin
 rights, DLL injection, or background services.

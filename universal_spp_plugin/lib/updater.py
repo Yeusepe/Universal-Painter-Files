@@ -7,10 +7,12 @@ from dataclasses import dataclass
 import hashlib
 import json
 import os
+import platform
 import re
 import shutil
 import tempfile
 import time
+import sys
 import urllib.request
 import zipfile
 
@@ -81,8 +83,19 @@ def compare_versions(left, right):
     return (a > b) - (a < b)
 
 
+def platform_tag():
+    machine = platform.machine().lower()
+    arch = {'amd64': 'x64', 'x86_64': 'x64', 'arm64': 'arm64', 'aarch64': 'arm64'}.get(machine)
+    system = {'Windows': 'windows', 'Linux': 'linux', 'Darwin': 'macos'}.get(platform.system())
+    if system is None or arch is None or (system == 'windows' and arch != 'x64'):
+        raise UpdateError(f'Unsupported platform: {platform.system()} {machine}')
+    return f'{system}-{arch}'
+
+
 def asset_name_for_version(version):
-    return f"{_ZIP_ROOT}-{normalize_version(version)}.zip"
+    tag = platform_tag()
+    suffix = '' if tag == 'windows-x64' else '-' + tag
+    return f"{_ZIP_ROOT}-{normalize_version(version)}{suffix}.zip"
 
 
 def settings_dir(base_dir=None):
@@ -92,8 +105,12 @@ def settings_dir(base_dir=None):
     if override:
         return override
     appdata = os.environ.get("APPDATA")
-    if appdata:
+    if sys.platform == 'win32' and appdata:
         return os.path.join(appdata, "UniversalSPP")
+    if sys.platform == 'darwin':
+        return os.path.join(os.path.expanduser('~/Library/Application Support'), 'UniversalSPP')
+    if sys.platform.startswith('linux'):
+        return os.path.join(os.environ.get('XDG_CONFIG_HOME') or os.path.expanduser('~/.config'), 'universal-spp')
     return os.path.join(os.path.expanduser("~"), ".universal_spp")
 
 
@@ -234,6 +251,18 @@ def extract_sha256(text):
     return match.group(1).lower() if match else ""
 
 
+def checksum_for_asset(text, asset_name):
+    for line in (text or '').splitlines():
+        standard = re.fullmatch(r'\s*[A-Fa-f0-9]{64}\s+\*?(.+?)\s*', line)
+        bsd = re.fullmatch(r'\s*SHA256\s*\((.*?)\)\s*=\s*[A-Fa-f0-9]{64}\s*', line, re.IGNORECASE)
+        filename = standard.group(1) if standard else bsd.group(1) if bsd else None
+        if filename == asset_name:
+            return extract_sha256(line)
+    # A sidecar containing only a digest has no filename to match.
+    text = (text or '').strip()
+    return text.lower() if re.fullmatch(r'[A-Fa-f0-9]{64}', text) else ''
+
+
 def _checksum_asset_url(assets, zip_name):
     names = {
         (zip_name + ".sha256").lower(),
@@ -271,7 +300,9 @@ def update_info_from_release(release):
         html_url=release.get("html_url") or RELEASES_PAGE_URL,
         asset_name=zip_name,
         download_url=url,
-        sha256=extract_sha256(release.get("body") or ""),
+        sha256=extract_sha256(asset.get('digest') or '') or (
+            extract_sha256(release.get('body') or '')
+            if sum(str(item.get('name', '')).startswith(_ZIP_ROOT + '-') and str(item.get('name', '')).endswith('.zip') for item in assets) == 1 else ''),
         checksum_url=_checksum_asset_url(assets, zip_name),
     )
 
@@ -342,6 +373,9 @@ def safe_extract(zip_path, dest_dir):
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with z.open(info) as src, open(target, "wb") as dst:
                 shutil.copyfileobj(src, dst)
+            if sys.platform != 'win32' and ((info.external_attr >> 16) & 0o111 or norm in (
+                    f'{_ZIP_ROOT}/bin/uspp_tool', f'{_ZIP_ROOT}/bin/uspp_tool/uspp_tool')):
+                os.chmod(target, 0o755)
 
 
 def _download_url(url, path, timeout=60, progress=None):
@@ -368,7 +402,9 @@ def download_update(info, temp_dir=None, timeout=60, progress=None):
     _download_url(info.download_url, zip_path, timeout=timeout, progress=progress)
     expected = info.sha256
     if not expected and info.checksum_url:
-        expected = extract_sha256(request_text(info.checksum_url, timeout=timeout))
+        expected = checksum_for_asset(request_text(info.checksum_url, timeout=timeout), info.asset_name)
+        if not expected:
+            raise UpdateError(f'The checksum file does not contain a checksum for {info.asset_name}.')
     if progress:
         progress("Verifying update...", None)
     validate_update_zip(zip_path, expected)

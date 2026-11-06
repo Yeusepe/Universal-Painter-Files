@@ -38,6 +38,7 @@ from lib.config_manager import load_config
 from lib.hbo_reserializer import HBOSerializer
 from lib.shader_compat import LEGACY_OPENPBR_SHADER, OPENPBR_LOSS, uses_openpbr
 from spp_extractor import _version_value_offset
+from lib.project_archive import open_archive
 
 
 def _emit_progress(frac, msg):
@@ -157,7 +158,7 @@ class SPPBuilder:
                      f"(format > {maxfmt}); dropping their layers: {sorted(drop)}")
 
     def build_from_uspp(self, uspp_path: str, output_spp_path: str,
-                        target_major: Optional[int] = None) -> bool:
+                        target_major: Optional[int] = None, archive=None) -> bool:
         """
         Build an SPP file from a USPP archive.
 
@@ -180,7 +181,7 @@ class SPPBuilder:
         print(f"Building SPP from: {uspp_path}")
 
         try:
-            with zipfile.ZipFile(str(uspp_path), 'r') as zf:
+            with open_archive(archive if archive is not None else uspp_path) as zf:
                 # Read manifest
                 manifest = json.loads(zf.read('manifest.json'))
                 self.log(f"Source: {manifest.get('source_file', 'unknown')}")
@@ -1191,7 +1192,8 @@ def _m3_x64_128(data: bytes, seed: int = 0xF13A0239) -> tuple[int, int]:
 
 
 def build_spp(uspp_path: str, output_path: str, verbose: bool = False,
-              target_major: Optional[int] = None, preserve_source: bool = False) -> bool:
+              target_major: Optional[int] = None, preserve_source: bool = False,
+              archive=None) -> bool:
     """
     Convenience function to build SPP from USPP.
 
@@ -1214,7 +1216,7 @@ def build_spp(uspp_path: str, output_path: str, verbose: bool = False,
             target_major=target_major,
             preserve_source=preserve_source,
         )
-        return builder.build_from_uspp(uspp_path, output_path)
+        return builder.build_from_uspp(uspp_path, output_path, archive=archive)
     finally:
         if gc_was_enabled:
             gc.enable()

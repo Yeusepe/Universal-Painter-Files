@@ -28,7 +28,7 @@ def _parent():
 
 def open_uspp():
     QtWidgets = _qt()
-    path, _ = QtWidgets.QFileDialog.getOpenFileName(_parent(), "Open Universal Project", "", "Painter projects (*.uspp *.spp)")
+    path, _ = QtWidgets.QFileDialog.getOpenFileName(_parent(), "Open Universal Project", "", "Painter projects (*.uspp *.usppz *.spp)")
     return path or None
 
 
@@ -84,7 +84,7 @@ def confirm_lossy(plan):
         f"and will be converted to v{plan['target_version']}.\n\n"
         "This is a one-way, lossy conversion. The following will be lost or changed:\n\n"
         f"{bullets}\n\n"
-        "Your original .uspp is not modified. Continue?"
+        "Your original Universal archive is not modified. Continue?"
     )
     box = QtWidgets.QMessageBox(_parent())
     box.setIcon(QtWidgets.QMessageBox.Warning)

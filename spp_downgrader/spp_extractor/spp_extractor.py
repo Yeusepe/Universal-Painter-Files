@@ -38,6 +38,7 @@ import zipfile
 from datetime import datetime
 from typing import Dict, List, Any
 from pathlib import Path
+from lib.performance import span
 
 
 def emit_progress(frac, msg):
@@ -133,7 +134,8 @@ class SPPExtractor:
                     pass
 
             # Recursively traverse the file
-            hdf5_structure = self._build_structure_tree(f)
+            with span('extract.structure'):
+                hdf5_structure = self._build_structure_tree(f)
 
             # Extract all items
             def visitor(name: str, obj):
@@ -288,7 +290,8 @@ class SPPExtractor:
 
         # Read raw data
         try:
-            raw_data = bytes(obj[()])
+            with span('extract.read_dataset', dataset=path, bytes=int(obj.nbytes)):
+                raw_data = bytes(obj[()])
         except Exception as e:
             self.errors.append(f"Failed to read {path}: {e}")
             raw_data = b''
@@ -409,16 +412,16 @@ class SPPExtractor:
 
     def save_as_uspp(self, extraction: SPPExtraction, output_path: str,
                      extra_manifest: dict = None, raster_capture_dir: str = None,
-                     raster_budget_bytes: int = None):
-        """Save extraction result as a USPP (ZIP) archive. extra_manifest merges extra
+                     raster_budget_bytes: int = None, compression=None):
+        """Save project members using ZIP by default, or the requested compression.
+        extra_manifest merges extra
         top-level fields into manifest.json (e.g. created_version, supported_versions)."""
         output_path = Path(output_path)
 
         print(f"Saving to: {output_path}")
 
-        # Level 1: the payload is mostly already-compressed binary, so level-6 deflate
-        # burns CPU for little gain. Level 1 is several times faster at near-identical size.
-        with zipfile.ZipFile(str(output_path), 'w', zipfile.ZIP_DEFLATED, compresslevel=1) as zf:
+        from lib.project_archive import ArchiveWriter
+        with ArchiveWriter(output_path, compression) as zf:
             # Write metadata
             manifest = {
                 'version': '1.0',
@@ -430,13 +433,14 @@ class SPPExtractor:
             }
             if extra_manifest:
                 manifest.update(extra_manifest)
+            manifest['compression'] = zf.compression_metadata()
             zf.writestr('manifest.json', json.dumps(manifest, indent=2))
+
+            # Keep these first so metadata-only 7z reads stop before bulk payloads.
+            zf.writestr('metadata.json', json.dumps(extraction.metadata, indent=2))
 
             # Write HDF5 structure
             zf.writestr('structure.json', json.dumps(extraction.hdf5_structure, indent=2))
-
-            # Write metadata
-            zf.writestr('metadata.json', json.dumps(extraction.metadata, indent=2))
 
             # Write group info
             groups_info = {path: {
@@ -492,6 +496,8 @@ class SPPExtractor:
                     "assets": [],
                     "warnings": [f"could not attach raster capture: {e}"],
                 }, indent=2))
+
+            emit_progress(-1, "Finishing compression...")
 
         print(f"  Created USPP archive: {output_path}")
         print(f"  Datasets: {len(extraction.datasets)}")
