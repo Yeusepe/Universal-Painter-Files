@@ -10,6 +10,82 @@ class Setup {
     const string Key = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\UniversalSPP";
     const string ShellKey = @"Software\Classes\SystemFileAssociations\.spp\shell\";
     [DllImport("shell32.dll")] static extern void SHChangeNotify(uint e, uint f, IntPtr a, IntPtr b);
+    static void CopyExisting(string source, string destination) {
+        if ((File.GetAttributes(source) & FileAttributes.ReparsePoint) != 0)
+            throw new IOException("The existing installation contains a link: " + source);
+        Directory.CreateDirectory(destination);
+        foreach (string file in Directory.GetFiles(source)) {
+            if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("The existing installation contains a link: " + file);
+            File.Copy(file, Path.Combine(destination, Path.GetFileName(file)), false);
+        }
+        foreach (string directory in Directory.GetDirectories(source))
+            CopyExisting(directory, Path.Combine(destination, Path.GetFileName(directory)));
+    }
+    static string ManagedPath(string root, string relative) {
+        string path = Path.GetFullPath(Path.Combine(root, relative));
+        if (!path.StartsWith(Path.GetFullPath(root) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("Invalid installed file path: " + relative);
+        return path;
+    }
+    // Build a complete replacement beside the install. No installed file is
+    // changed until every copy and the replacement manifest have succeeded.
+    internal static void InstallPayload(string source, string target, byte[] uninstall, Action beforePublish = null) {
+        target = Path.GetFullPath(target).TrimEnd(Path.DirectorySeparatorChar);
+        string parent = Path.GetDirectoryName(target);
+        Directory.CreateDirectory(parent);
+        string candidate = Path.Combine(parent, ".UniversalSPP-new-" + Guid.NewGuid().ToString("N"));
+        string backup = Path.Combine(parent, ".UniversalSPP-backup-" + Guid.NewGuid().ToString("N"));
+        if (!String.Equals(Path.GetDirectoryName(Path.GetFullPath(candidate)), parent, StringComparison.OrdinalIgnoreCase)
+                || !String.Equals(Path.GetDirectoryName(Path.GetFullPath(backup)), parent, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("Invalid installation staging path");
+        bool oldMoved = false, published = false;
+        try {
+            if (Directory.Exists(target)) CopyExisting(target, candidate);
+            else Directory.CreateDirectory(candidate);
+            string oldManifest = Path.Combine(candidate, "installed-files.txt");
+            if (File.Exists(oldManifest)) {
+                foreach (string relative in File.ReadAllLines(oldManifest)) {
+                    if (String.IsNullOrWhiteSpace(relative)) continue;
+                    string obsolete = ManagedPath(candidate, relative);
+                    if (File.Exists(obsolete)) File.Delete(obsolete);
+                }
+            }
+            var manifest = new System.Collections.Generic.List<string>();
+            foreach (string file in Directory.GetFiles(source, "*", SearchOption.AllDirectories)) {
+                string relative = file.Substring(source.Length + 1);
+                string dest = ManagedPath(candidate, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(dest));
+                File.Copy(file, dest, true);
+                manifest.Add(relative);
+            }
+            File.WriteAllLines(Path.Combine(candidate, "installed-files.txt"), manifest);
+            File.WriteAllBytes(Path.Combine(candidate, "uninstall.ps1"), uninstall);
+            if (Directory.Exists(target)) { Directory.Move(target, backup); oldMoved = true; }
+            try {
+                if (beforePublish != null) beforePublish();
+                Directory.Move(candidate, target);
+                published = true;
+            } catch (Exception error) {
+                if (oldMoved) {
+                    try { Directory.Move(backup, target); oldMoved = false; }
+                    catch (Exception rollback) {
+                        throw new IOException("Installation failed and the previous installation remains at " + backup + ": " + rollback.Message, error);
+                    }
+                }
+                throw;
+            }
+        } finally {
+            try { if (Directory.Exists(candidate)) Directory.Delete(candidate, true); }
+            catch (IOException) { /* Leave staging files for recovery if locked. */ }
+            catch (UnauthorizedAccessException) { /* Leave staging files for recovery. */ }
+            if (published && oldMoved && Directory.Exists(backup)) {
+                try { Directory.Delete(backup, true); }
+                catch (IOException) { /* Keep the previous copy if another process still has it open. */ }
+                catch (UnauthorizedAccessException) { /* Keep the previous copy for recovery. */ }
+            }
+        }
+    }
     static void RegisterConversion(string target, string verb, string label, bool compressed, bool replaceOriginal = false) {
         string launcher = Path.Combine(target, "UniversalSPP-Convert.exe");
         using (RegistryKey key = Registry.CurrentUser.CreateSubKey(ShellKey + verb)) {
@@ -50,16 +126,10 @@ class Setup {
                     throw new IOException("Universal SPP is running. Finish or cancel the active batch, then run this installer again.");
                 }
             }
-            Directory.CreateDirectory(target);
-            var files = Directory.GetFiles(source, "*", SearchOption.AllDirectories);
-            var manifest = new System.Collections.Generic.List<string>();
-            foreach (string file in files) {
-                string relative = file.Substring(source.Length + 1);
-                string dest = Path.Combine(target, relative);
-                Directory.CreateDirectory(Path.GetDirectoryName(dest));
-                File.Copy(file, dest, true);
-                manifest.Add(relative);
-            }
+            byte[] uninstall;
+            using (Stream script = Assembly.GetExecutingAssembly().GetManifestResourceStream("uninstall.ps1"))
+            using (var buffer = new MemoryStream()) { script.CopyTo(buffer); uninstall = buffer.ToArray(); }
+            InstallPayload(source, target, uninstall);
             using (RegistryKey env = Registry.CurrentUser.CreateSubKey("Environment")) {
                 string path = (string)env.GetValue("Path", "", RegistryValueOptions.DoNotExpandEnvironmentNames);
                 bool found = false;
@@ -69,9 +139,6 @@ class Setup {
                     File.WriteAllText(Path.Combine(target, ".path-added"), "");
                 }
             }
-            File.WriteAllLines(Path.Combine(target, "installed-files.txt"), manifest);
-            using (Stream script = Assembly.GetExecutingAssembly().GetManifestResourceStream("uninstall.ps1"))
-            using (var output = File.Create(Path.Combine(target, "uninstall.ps1"))) script.CopyTo(output);
             using (RegistryKey key = Registry.CurrentUser.CreateSubKey(Key)) {
                 key.SetValue("DisplayName", "Universal SPP CLI (modified build)");
                 key.SetValue("DisplayVersion", "1.0.0");
