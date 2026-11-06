@@ -1,5 +1,6 @@
 import argparse
 import contextlib
+import errno
 import hashlib
 import io
 import json
@@ -19,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'spp_downgrader'))
 import uspp_tool
 from lib.project_archive import ArchiveReader, ArchiveWriter, CompressionSettings
+from archive_test_helpers import corrupt_zip_payload
 
 
 def _test_worker_init():
@@ -384,7 +386,24 @@ class BatchPackTests(unittest.TestCase):
         self.assertIn('previous archive is in the Recycle Bin', stderr)
         self.assertEqual((self.trash / output.name).read_bytes(), b'previous archive')
         self.assertTrue(source.exists())
-        self.assert_no_temporaries()
+        retained = list(self.root.glob('*.tmp'))
+        self.assertEqual(len(retained), 1)
+        self.assertIn(str(retained[0]), stderr)
+        with ArchiveReader(retained[0]) as archive:
+            self.assertIsNone(archive.testzip())
+
+    def test_publication_falls_back_when_links_are_unsupported(self):
+        temporary = self.root / 'verified.tmp'
+        destination = self.root / 'output.uspp'
+        temporary.write_bytes(b'verified archive')
+        with mock.patch.object(uspp_tool, '_rename_noreplace', return_value=False), \
+             mock.patch.object(uspp_tool.os, 'link', side_effect=OSError(errno.EPERM, 'no links')):
+            uspp_tool._publish_posix(temporary, destination)
+            self.assertEqual(destination.read_bytes(), b'verified archive')
+            with self.assertRaises(FileExistsError):
+                uspp_tool._publish_posix(temporary, destination)
+        self.assertEqual(destination.read_bytes(), b'verified archive')
+        self.assertEqual(temporary.read_bytes(), b'verified archive')
 
     def test_overwrite_does_not_recycle_output_changed_during_packing(self):
         source = self.project('project.spp')
@@ -484,9 +503,12 @@ class BatchPackTests(unittest.TestCase):
         def corrupt_first(args):
             rc = pack(args)
             if Path(args.input) == first:
-                data = bytearray(Path(args.output).read_bytes())
-                data[40] ^= 0xFF
-                Path(args.output).write_bytes(data)
+                if self.method == 'deflate':
+                    corrupt_zip_payload(Path(args.output))
+                else:
+                    data = bytearray(Path(args.output).read_bytes())
+                    data[40] ^= 0xFF
+                    Path(args.output).write_bytes(data)
             return rc
 
         with mock.patch.object(uspp_tool, 'cmd_pack', side_effect=corrupt_first):
@@ -632,7 +654,7 @@ class BatchPackTests(unittest.TestCase):
             self.assertEqual(self.run_batch(source, delete_source=True)[0], 1)
         self.assertEqual(output.read_bytes(), b'created by another process')
         self.assertTrue(source.exists())
-        self.assert_no_temporaries()
+        self.assertEqual(len(list(self.root.glob('*.tmp'))), 1)
 
     def test_directory_links_are_not_followed(self):
         source = self.project('projects/first.spp')

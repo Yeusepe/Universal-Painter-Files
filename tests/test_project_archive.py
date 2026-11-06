@@ -20,6 +20,7 @@ import uspp_tool
 from lib.project_archive import ArchiveReader, ArchiveWriter, CompressionSettings, verify_project_archive
 from lib.raster_manifest import add_capture_dir_to_zip
 from test_project_versions import settings_bytes
+from archive_test_helpers import corrupt_zip_payload
 
 
 class ProjectArchiveTests(unittest.TestCase):
@@ -81,6 +82,29 @@ class ProjectArchiveTests(unittest.TestCase):
                 plan = json.loads(output.getvalue())
                 self.assertIn(OPENPBR_LOSS, plan['lost_features'])
                 self.assertTrue(plan['lossy'])
+
+    def test_plan_extracts_only_relevant_seven_zip_payloads(self):
+        source = self.project()
+        with h5py.File(source, 'a') as project:
+            project.create_dataset('resources/material.shader',
+                data=np.frombuffer(b'import lib-openpbr-test.glsl\n', dtype='u1'))
+        path = self.root / 'selection.usppz'
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(uspp_tool.cmd_pack(argparse.Namespace(
+                input=str(source), output=str(path), verbose=False,
+                compression_settings=CompressionSettings('lzma2'))), 0)
+        with ArchiveReader(path, members={'datasets.json'}) as reader:
+            index = json.loads(reader.read('datasets.json'))
+        calls = []
+        original = py7zr.SevenZipFile.extract
+        def extract(archive, *args, **kwargs):
+            calls.append(set(kwargs['targets']))
+            return original(archive, *args, **kwargs)
+        with mock.patch.object(py7zr.SevenZipFile, 'extract', extract), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(uspp_tool.cmd_plan(argparse.Namespace(uspp=str(path), target='10')), 0)
+        selected = set().union(*calls)
+        self.assertIn(index['resources/material.shader']['data_file'], selected)
+        self.assertNotIn(index['paint/payload.bin']['data_file'], selected)
 
     def test_info_extracts_only_metadata_and_reports_actual_container(self):
         _, path = self.pack('lzma2')
@@ -169,9 +193,15 @@ class ProjectArchiveTests(unittest.TestCase):
         for method in ('deflate', 'lzma2'):
             with self.subTest(method=method):
                 _, path = self.pack(method)
-                data = bytearray(path.read_bytes())
-                data[40] ^= 0xFF
-                path.write_bytes(data)
+                if method == 'deflate':
+                    corrupt_zip_payload(path)
+                    with ArchiveReader(path, members={'manifest.json', 'metadata.json', 'structure.json',
+                                                       'groups.json', 'datasets.json', 'raster/manifest.json'}) as reader:
+                        verify_project_archive(reader, full=False)
+                else:
+                    data = bytearray(path.read_bytes())
+                    data[40] ^= 0xFF
+                    path.write_bytes(data)
                 with self.assertRaises(Exception):
                     with ArchiveReader(path) as reader:
                         verify_project_archive(reader, full=True)

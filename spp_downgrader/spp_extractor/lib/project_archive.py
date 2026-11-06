@@ -140,7 +140,7 @@ class ArchiveReader:
         self.path = Path(path)
         self._cache = None
         self._cached_files = None
-        self._members = members
+        self._members = None if members is None else set(members)
         self._all_crcs = False
         self._decoders = []
         self._verification_only = verification_only
@@ -230,10 +230,16 @@ class ArchiveReader:
 
     def _extract_cache(self):
         from py7zr.io import Py7zIO, WriterFactory
-        self._cache = tempfile.TemporaryDirectory(prefix='uspp-read-')
-        self._cache_root = Path(self._cache.name).resolve()
+        if self._cache is None:
+            self._cache = tempfile.TemporaryDirectory(prefix='uspp-read-')
+            self._cache_root = Path(self._cache.name).resolve()
+            self._cached_files = {}
         selected = self._files if self._members is None else self._files.intersection(self._members)
-        paths = {name: self._cache_root / f'{index}.bin' for index, name in enumerate(sorted(selected))}
+        selected = selected.difference(self._cached_files)
+        if not selected:
+            return
+        offset = len(self._cached_files)
+        paths = {name: self._cache_root / f'{offset + index}.bin' for index, name in enumerate(sorted(selected))}
 
         class DiskIO(Py7zIO):
             def __init__(self, path):
@@ -280,7 +286,12 @@ class ArchiveReader:
                 output.close()
         if any(not path.is_file() for path in paths.values()):
             raise ValueError('archive extraction did not produce all requested members')
-        self._cached_files = paths
+        self._cached_files.update(paths)
+
+    def select_members(self, members):
+        """Add members to a selective read without extracting unrelated payloads."""
+        if self._members is not None:
+            self._members.update(members)
 
     def _verify_stream(self):
         """Check every member CRC while retaining only project metadata."""
@@ -348,7 +359,7 @@ class ArchiveReader:
             if self._metadata_cache is None:
                 self._verify_stream()
             return self._metadata_cache[name]
-        if self._cached_files is None:
+        if self._cached_files is None or name not in self._cached_files:
             self._extract_cache()
         return self._cached_files[name].read_bytes()
 

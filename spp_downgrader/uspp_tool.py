@@ -23,6 +23,8 @@ import tempfile
 import io
 import multiprocessing
 import signal
+import errno
+import shutil
 from dataclasses import replace
 from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED
 from pathlib import Path
@@ -185,6 +187,8 @@ def _raster_requests_from_uspp(uspp_path, s_label, t_label):
         except Exception:
             return out
         for path, info in datasets.items():
+            if path not in ("paint/document.bin", "paint/default_material.bin"):
+                continue
             if not info.get("is_hbo"):
                 continue
             data_file = info.get("data_file")
@@ -390,9 +394,11 @@ def _batch_pack_one(source, destination, args):
             with span('pack.publish'):
                 _publish_archive(temporary, destination)
         except OSError as error:
+            recovery = temporary
+            temporary = None
             if previous_output is not None:
-                raise RuntimeError(f'could not save the new archive; previous archive is in the Recycle Bin and source was kept: {error}') from error
-            raise
+                raise RuntimeError(f'could not save the new archive; previous archive is in the Recycle Bin and source was kept. Verified archive: {recovery}: {error}') from error
+            raise RuntimeError(f'could not save the new archive; verified archive: {recovery}: {error}') from error
         if args.delete_source:
             try:
                 if _source_identity(source) != identity:
@@ -412,7 +418,61 @@ def _publish_archive(temporary, destination):
         # rename() cannot overwrite a file created after recycling the previous output.
         os.rename(temporary, destination)
     else:
+        _publish_posix(temporary, destination)
+
+
+def _rename_noreplace(temporary, destination):
+    """Use the platform's atomic exclusive rename when available."""
+    import ctypes
+    libc = ctypes.CDLL(None, use_errno=True)
+    if sys.platform.startswith('linux'):
+        function = getattr(libc, 'renameat2', None)
+        arguments = (-100, os.fsencode(temporary), -100, os.fsencode(destination), 1)
+        types = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
+    elif sys.platform == 'darwin':
+        function = getattr(libc, 'renamex_np', None)
+        arguments = (os.fsencode(temporary), os.fsencode(destination), 4)
+        types = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint)
+    else:
+        return False
+    if function is None:
+        return False
+    function.argtypes, function.restype = types, ctypes.c_int
+    if function(*arguments) == 0:
+        return True
+    code = ctypes.get_errno()
+    if code in (errno.ENOSYS, errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP):
+        return False
+    raise OSError(code, os.strerror(code), str(destination))
+
+
+def _publish_posix(temporary, destination):
+    if _rename_noreplace(temporary, destination):
+        return
+    try:
         os.link(temporary, destination)
+        return
+    except OSError as error:
+        if error.errno not in (errno.EPERM, errno.ENOSYS, errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EXDEV):
+            raise
+    # Some filesystems support neither exclusive rename nor hard links. Reserve
+    # the destination without replacing another file, then copy the verified
+    # archive. Keep the temporary file until the copy has completed.
+    fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_BINARY', 0), 0o600)
+    identity = os.fstat(fd)
+    try:
+        with os.fdopen(fd, 'wb') as output, temporary.open('rb') as source:
+            shutil.copyfileobj(source, output, length=1024 * 1024)
+            output.flush()
+            os.fsync(output.fileno())
+    except BaseException:
+        try:
+            current = destination.lstat()
+            if (current.st_dev, current.st_ino) == (identity.st_dev, identity.st_ino):
+                destination.unlink()
+        except OSError:
+            pass
+        raise
 
 
 def _worker_init():
@@ -700,7 +760,7 @@ def cmd_info(args):
 
 
 def cmd_plan(args):
-    with open_archive(args.uspp) as archive:
+    with open_archive(args.uspp, members=PROJECT_METADATA_MEMBERS) as archive:
         return _plan_from_archive(args, archive)
 
 
@@ -723,9 +783,18 @@ def _plan_from_archive(args, archive):
         from lib.raster_manifest import summarize
         profile = mp.load(f"v{s_label}_to_v{t_label}")
         lost = build_lossiness_report(profile)
+        try:
+            datasets = json.loads(archive.read('datasets.json'))
+        except (KeyError, ValueError):
+            if parse_ver(t_label)[0] <= 10:
+                raise
+            datasets = {}
+        needed = {info.get('data_file') for path, info in datasets.items()
+                  if (path in ('paint/document.bin', 'paint/default_material.bin') and info.get('is_hbo'))
+                  or (parse_ver(t_label)[0] <= 10 and path.endswith('.shader') and '/.alg_meta/' not in path)}
+        archive.select_members(needed - {None, ''})
         if parse_ver(t_label)[0] <= 10:
             from lib.shader_compat import OPENPBR_LOSS, uses_openpbr
-            datasets = json.loads(archive.read('datasets.json'))
             for path, info in datasets.items():
                 if path.endswith('.shader') and '/.alg_meta/' not in path:
                     payload = info.get('data_file')

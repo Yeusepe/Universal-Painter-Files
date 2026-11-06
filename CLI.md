@@ -89,7 +89,7 @@ py7zr still checks member checksums and validates project references. Other code
 The decoder uses up to eight threads and caps its parallel buffers at 1 GiB per active archive;
 dictionary, cache, and Python buffers use additional memory. It falls back to one thread if the parallel buffer limit is reached.
 The portable executable includes the native library and its license.
-Automatic compression uses up to 24 threads and double buffering. Batch workers share the available CPU-thread budget.
+Automatic compression uses up to 24 threads. Batch workers share the available CPU-thread budget.
 Completed in-memory member buffers are released as soon as they have been written.
 Full verification retains metadata and discards checked payload bytes, while still checking every member CRC.
 Each project gets its own solid stream, which shares compression history between archive members.

@@ -72,7 +72,9 @@ class FastLzma2Encoder:
         self._stream = None
         self._dll = library()
         self._output = C.create_string_buffer(1024 * 1024)
-        self._stream = self._dll.FL2_createCStreamMt(settings.effective_threads, 1)
+        # The pinned upstream dual-buffer path can race while copying output and
+        # leaks its partially initialized context when thread-pool creation fails.
+        self._stream = self._dll.FL2_createCStreamMt(settings.effective_threads, 0)
         if not self._stream:
             raise MemoryError('Could not allocate Fast LZMA2 stream')
         try:

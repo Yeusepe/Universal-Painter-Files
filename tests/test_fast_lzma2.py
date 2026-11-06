@@ -84,6 +84,7 @@ class FastLzma2Tests(unittest.TestCase):
                 payload = bytes([index]) * (2 * 1024**2) + os.urandom(65536)
                 settings = CompressionSettings('lzma2', threads=2)
                 with ArchiveWriter(path, settings) as writer:
+                    self.assertIs(py7zr.compressor.LZMA1Compressor, original)
                     self.assertEqual(writer.compression_metadata()['encoder'], 'fast-lzma2')
                     writer.writestr('first.bin', payload)
                     writer.writestr('second.bin', payload[::-1])
