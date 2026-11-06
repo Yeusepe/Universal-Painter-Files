@@ -3,6 +3,8 @@ so it is unit-testable headless. Data crosses the boundary as files + one JSON b
 import os
 import sys
 import subprocess
+import re
+import shutil
 
 _PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _CREATE_NO_WINDOW = 0x08000000  # Windows: don't flash a console for the child
@@ -29,9 +31,26 @@ def tool_path():
     return next((path for path in candidates if os.path.isfile(path)), candidates[0])
 
 
+def _python_command():
+    """Find a configured Python executable without treating Painter as Python."""
+    configured = os.environ.get('USPP_PYTHON')
+    if configured:
+        return shutil.which(configured)
+    current = sys.executable or ''
+    if re.fullmatch(r'python(?:w|\d+(?:\.\d+)*)?(?:\.exe)?', os.path.basename(current), re.IGNORECASE):
+        return current if os.path.isfile(current) else None
+    return None
+
+
 def _argv(*args):
     tp = tool_path()
-    head = [sys.executable, tp] if tp.lower().endswith(".py") else [tp]
+    if tp.lower().endswith('.py'):
+        python = _python_command()
+        if not python:
+            raise RuntimeError('Set USPP_PYTHON to a Python interpreter for the source converter.')
+        head = [python, tp]
+    else:
+        head = [tp]
     return head + list(args)
 
 
@@ -49,11 +68,15 @@ def _run(*args, capture=True, env_extra=None):
 
 def available():
     path = tool_path()
-    return os.path.isfile(path) and (path.lower().endswith('.py') or os.name == 'nt' or os.access(path, os.X_OK))
+    if not os.path.isfile(path):
+        return False
+    if path.lower().endswith('.py'):
+        return bool(_python_command())
+    return os.name == 'nt' or os.access(path, os.X_OK)
 
 
 def missing_tool_message():
-    return f'Converter not found or not executable.\nExpected {tool_path()}'
+    return f'Converter not found or not executable.\nExpected {tool_path()}\nFor a .py converter, set USPP_PYTHON to a Python interpreter.'
 
 
 def _spp_icon(winreg):

@@ -27,10 +27,12 @@ integration layer over `bin/uspp_tool/uspp_tool.exe`.
 ## Install
 
 1. Get the `bin/uspp_tool/` converter folder.
-   - From a release: download the release build and keep the included
-     `universal_spp_plugin/bin/uspp_tool/uspp_tool.exe`.
-   - From source: run `build.ps1` from the repository root. It builds the
-     converter and copies it into this plugin folder.
+   - From a release: download `universal_spp_plugin-<version>.zip` for Windows,
+     `universal_spp_plugin-<version>-linux-x64.zip` for Linux,
+     `universal_spp_plugin-<version>-macos-x64.zip` for Intel Mac, or
+     `universal_spp_plugin-<version>-macos-arm64.zip` for Apple Silicon.
+   - From source: run `build.ps1` on Windows or `python build.py` on Linux and
+     macOS from the repository root. This builds the converter and plugin ZIP.
 2. In Painter, open **Python > Plugins Folder**.
 3. Open the `plugins` subfolder.
 4. Copy the whole `universal_spp_plugin` folder into that `plugins` folder.
@@ -43,7 +45,8 @@ integration layer over `bin/uspp_tool/uspp_tool.exe`.
 6. Confirm the converter exists:
 
    ```text
-   python/plugins/universal_spp_plugin/bin/uspp_tool/uspp_tool.exe
+   python/plugins/universal_spp_plugin/bin/uspp_tool/uspp_tool.exe  (Windows)
+   python/plugins/universal_spp_plugin/bin/uspp_tool/uspp_tool      (Linux and macOS)
    ```
 
 7. In Painter, choose **Python > Reload Plugins Folder**, or restart Painter.
@@ -219,8 +222,9 @@ bundled executable:
 $env:USPP_TOOL = "C:\path\to\universal-spp\spp_downgrader\uspp_tool.py"
 ```
 
-If `USPP_TOOL` ends in `.py`, `runner.py` launches it with the current Python
-interpreter. If it points to an `.exe`, it runs that executable directly.
+If `USPP_TOOL` ends in `.py`, set `USPP_PYTHON` to a Python interpreter with the
+project dependencies installed. Painter's executable is not a Python interpreter.
+Executable tools run directly.
 
 Useful rebuild command from the repository root:
 

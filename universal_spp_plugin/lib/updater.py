@@ -253,10 +253,11 @@ def extract_sha256(text):
 
 def checksum_for_asset(text, asset_name):
     for line in (text or '').splitlines():
-        if asset_name in line:
-            checksum = extract_sha256(line)
-            if checksum:
-                return checksum
+        standard = re.fullmatch(r'\s*[A-Fa-f0-9]{64}\s+\*?(.+?)\s*', line)
+        bsd = re.fullmatch(r'\s*SHA256\s*\((.*?)\)\s*=\s*[A-Fa-f0-9]{64}\s*', line, re.IGNORECASE)
+        filename = standard.group(1) if standard else bsd.group(1) if bsd else None
+        if filename == asset_name:
+            return extract_sha256(line)
     # A sidecar containing only a digest has no filename to match.
     text = (text or '').strip()
     return text.lower() if re.fullmatch(r'[A-Fa-f0-9]{64}', text) else ''

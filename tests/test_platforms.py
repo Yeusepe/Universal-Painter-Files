@@ -85,6 +85,9 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual(updater.checksum_for_asset(text, 'macos.zip'), 'b' * 64)
         self.assertEqual(updater.checksum_for_asset(text, 'linux.zip'), '')
         self.assertEqual(updater.checksum_for_asset('c' * 64 + '\n', 'linux.zip'), 'c' * 64)
+        self.assertEqual(updater.checksum_for_asset('d' * 64 + '  *macos.zip\n', 'macos.zip'), 'd' * 64)
+        self.assertEqual(updater.checksum_for_asset('SHA256 (macos.zip) = ' + 'e' * 64, 'macos.zip'), 'e' * 64)
+        self.assertEqual(updater.checksum_for_asset('f' * 64 + '  not-macos.zip\n', 'macos.zip'), '')
 
     def test_posix_update_restores_converter_permissions(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -1,5 +1,6 @@
 import importlib.util
 import os
+import shutil
 from pathlib import Path
 import sys
 import unittest
@@ -85,6 +86,22 @@ class PluginRunnerTests(unittest.TestCase):
             "--raster-budget-mb", "256",
         ])
         self.assertEqual(env, {})
+
+    def test_python_override_uses_configured_interpreter_inside_painter(self):
+        import tempfile
+        runner = load_runner()
+        with tempfile.TemporaryDirectory() as directory:
+            script = Path(directory) / 'converter.py'
+            script.touch()
+            with mock.patch.dict(os.environ, {'USPP_TOOL': str(script), 'USPP_PYTHON': sys.executable}), \
+                 mock.patch.object(runner.sys, 'executable', 'Painter.exe'):
+                self.assertTrue(runner.available())
+                self.assertEqual(runner._argv('info')[0:2], [shutil.which(os.environ['USPP_PYTHON']), str(script)])
+            with mock.patch.dict(os.environ, {'USPP_TOOL': str(script)}, clear=True), \
+                 mock.patch.object(runner.sys, 'executable', 'Painter.exe'):
+                self.assertFalse(runner.available())
+                with self.assertRaisesRegex(RuntimeError, 'USPP_PYTHON'):
+                    runner._argv('info')
 
     def test_raster_plan_args_defaults_to_all_lower_targets(self):
         runner = load_runner()

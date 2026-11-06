@@ -63,13 +63,17 @@ formats still need a compatible migration profile.
 
 Use this path if you want the menu inside Painter.
 
-1. Download the latest `universal_spp_plugin.zip` release from the
-   [Releases](../../releases) page.
+1. Download the plugin ZIP for your system from the [Releases](../../releases) page:
+   `universal_spp_plugin-<version>.zip` for Windows,
+   `universal_spp_plugin-<version>-linux-x64.zip` for Linux,
+   `universal_spp_plugin-<version>-macos-x64.zip` for Intel Mac, or
+   `universal_spp_plugin-<version>-macos-arm64.zip` for Apple Silicon.
 2. Open Adobe Substance 3D Painter.
 3. Go to **Python > Plugins Folder**. This opens the correct plugin directory for
    your machine, usually `Documents\Adobe\Adobe Substance 3D Painter\python\plugins`.
 4. Extract the release so the plugin root is directly inside `plugins`.
-5. Make sure `universal_spp_plugin/bin/uspp_tool/uspp_tool.exe` exists.
+5. Make sure `universal_spp_plugin/bin/uspp_tool/uspp_tool.exe` exists on Windows,
+   or `universal_spp_plugin/bin/uspp_tool/uspp_tool` on Linux and macOS.
 6. Go to **Python > Reload Plugins Folder**, or restart Painter.
 7. Enable `universal_spp_plugin` from the **Python** menu if Painter did not
    enable it automatically.
